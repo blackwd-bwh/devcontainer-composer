@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =============================================================================
-# Dev Container Composer
+# Dev Container Composer (Dialog Version)
 # =============================================================================
 
 # Default configuration - can be overridden by config file or environment variables
@@ -14,13 +14,17 @@ DEFAULT_TEMPLATE_BRANCH="main"
 DEFAULT_TEMPLATE_SUBDIR="src"
 DEFAULT_FEATURES_SUBDIR="features"
 
+# Dialog temporary file for responses
+DIALOG_TEMP=$(mktemp)
+trap 'rm -f "$DIALOG_TEMP"' EXIT
+
 # Load configuration
 load_config() {
     # Load from config file if it exists
     if [[ -f "$DEFAULT_CONFIG_FILE" ]]; then
         source "$DEFAULT_CONFIG_FILE"
     fi
-    
+
     # Environment variables override config file
     DEVCONTAINER_REPO="${DEVCONTAINER_REPO:-${DEFAULT_DEVCONTAINER_REPO}}"
     GHCR_NAMESPACE="${GHCR_NAMESPACE:-${DEFAULT_GHCR_NAMESPACE}}"
@@ -65,46 +69,52 @@ EOF
 
 # Setup wizard for first-time users
 setup_wizard() {
-    echo "Dev Container Composer Setup"
-    echo "=================================="
-    echo
-    
+    dialog --title "Dev Container Composer Setup" --msgbox "Welcome to Dev Container Composer Setup\n\nThis wizard will help you configure the tool for first-time use." 10 60
+
     # Get repository URL
-    REPO_URL=$(whiptail --title "Repository Setup" --inputbox \
-        "Enter your dev container repository URL (SSH or HTTPS):" 10 70 3>&1 1>&2 2>&3)
-    [[ -z "$REPO_URL" ]] && echo "Setup cancelled." && exit 1
-    
+    if ! dialog --title "Repository Setup" --inputbox "Enter your dev container repository URL (SSH or HTTPS):" 10 70 2>"$DIALOG_TEMP"; then
+        echo "Setup cancelled."
+        exit 1
+    fi
+    REPO_URL=$(cat "$DIALOG_TEMP")
+    [[ -z "$REPO_URL" ]] && echo "Setup cancelled - no repository URL provided." && exit 1
+
     # Get GHCR namespace
-    NAMESPACE=$(whiptail --title "Feature Registry" --inputbox \
-        "Enter your GHCR namespace for features (e.g., ghcr.io/username):" 10 70 3>&1 1>&2 2>&3)
-    [[ -z "$NAMESPACE" ]] && echo "Setup cancelled." && exit 1
-    
+    if ! dialog --title "Feature Registry" --inputbox "Enter your GHCR namespace for features:\n(e.g., ghcr.io/username)" 10 70 2>"$DIALOG_TEMP"; then
+        echo "Setup cancelled."
+        exit 1
+    fi
+    NAMESPACE=$(cat "$DIALOG_TEMP")
+    [[ -z "$NAMESPACE" ]] && echo "Setup cancelled - no namespace provided." && exit 1
+
     # Get default project parent
-    PARENT=$(whiptail --title "Project Location" --inputbox \
-        "Enter default parent directory for projects:" 10 70 "$DEFAULT_PROJECT_PARENT" 3>&1 1>&2 2>&3)
-    [[ -z "$PARENT" ]] && echo "Setup cancelled." && exit 1
-    
+    if ! dialog --title "Project Location" --inputbox "Enter default parent directory for projects:" 10 70 "$DEFAULT_PROJECT_PARENT" 2>"$DIALOG_TEMP"; then
+        echo "Setup cancelled."
+        exit 1
+    fi
+    PARENT=$(cat "$DIALOG_TEMP")
+    [[ -z "$PARENT" ]] && echo "Setup cancelled - no parent directory provided." && exit 1
+
     # Optional: Advanced settings
-    if whiptail --title "Advanced Settings" --yesno \
-        "Would you like to configure advanced settings (branch, subdirectories)?" 8 60; then
-        
-        BRANCH=$(whiptail --title "Repository Branch" --inputbox \
-            "Template repository branch:" 8 50 "$DEFAULT_TEMPLATE_BRANCH" 3>&1 1>&2 2>&3)
+    if dialog --title "Advanced Settings" --yesno "Would you like to configure advanced settings?\n(branch, subdirectories)\n\nSelect 'No' to use defaults." 10 60; then
+
+        dialog --title "Repository Branch" --inputbox "Template repository branch:" 8 50 "$DEFAULT_TEMPLATE_BRANCH" 2>"$DIALOG_TEMP" || true
+        BRANCH=$(cat "$DIALOG_TEMP")
         BRANCH="${BRANCH:-$DEFAULT_TEMPLATE_BRANCH}"
-        
-        TEMPLATE_DIR=$(whiptail --title "Templates Directory" --inputbox \
-            "Subdirectory containing templates:" 8 50 "$DEFAULT_TEMPLATE_SUBDIR" 3>&1 1>&2 2>&3)
+
+        dialog --title "Templates Directory" --inputbox "Subdirectory containing templates:" 8 50 "$DEFAULT_TEMPLATE_SUBDIR" 2>"$DIALOG_TEMP" || true
+        TEMPLATE_DIR=$(cat "$DIALOG_TEMP")
         TEMPLATE_DIR="${TEMPLATE_DIR:-$DEFAULT_TEMPLATE_SUBDIR}"
-        
-        FEATURES_DIR=$(whiptail --title "Features Directory" --inputbox \
-            "Subdirectory containing features:" 8 50 "$DEFAULT_FEATURES_SUBDIR" 3>&1 1>&2 2>&3)
+
+        dialog --title "Features Directory" --inputbox "Subdirectory containing features:" 8 50 "$DEFAULT_FEATURES_SUBDIR" 2>"$DIALOG_TEMP" || true
+        FEATURES_DIR=$(cat "$DIALOG_TEMP")
         FEATURES_DIR="${FEATURES_DIR:-$DEFAULT_FEATURES_SUBDIR}"
     else
         BRANCH="$DEFAULT_TEMPLATE_BRANCH"
         TEMPLATE_DIR="$DEFAULT_TEMPLATE_SUBDIR"
         FEATURES_DIR="$DEFAULT_FEATURES_SUBDIR"
     fi
-    
+
     # Write configuration
     cat > "$DEFAULT_CONFIG_FILE" << EOF
 # Dev Container Composer Configuration
@@ -115,23 +125,26 @@ TEMPLATE_BRANCH="$BRANCH"
 TEMPLATE_SUBDIR="$TEMPLATE_DIR"
 FEATURES_SUBDIR="$FEATURES_DIR"
 EOF
-    
-    echo "✅ Configuration saved to $DEFAULT_CONFIG_FILE"
-    echo "You can now run the composer without --setup"
+
+    dialog --title "Setup Complete" --msgbox "✅ Configuration saved to $DEFAULT_CONFIG_FILE\n\nYou can now run the composer without --setup" 8 60
     exit 0
 }
 
 # Check dependencies
 check_dependencies() {
     local missing=()
-    
-    command -v whiptail >/dev/null || missing+=("whiptail")
+
+    command -v dialog >/dev/null || missing+=("dialog")
     command -v jq >/dev/null || missing+=("jq")
     command -v git >/dev/null || missing+=("git")
-    
+
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "❌ Missing required dependencies: ${missing[*]}"
         echo "Please install them and try again."
+        echo
+        echo "On Ubuntu/Debian: sudo apt install dialog jq git"
+        echo "On macOS: brew install dialog jq git"
+        echo "On RHEL/CentOS: sudo yum install dialog jq git"
         exit 1
     fi
 }
@@ -143,7 +156,7 @@ validate_config() {
         echo "Run: $(basename "$0") --setup"
         exit 1
     fi
-    
+
     if [[ -z "$GHCR_NAMESPACE" ]]; then
         echo "❌ No GHCR namespace configured."
         echo "Run: $(basename "$0") --setup"
@@ -202,7 +215,7 @@ clone_devcontainer_repo() {
         echo "❌ Failed to clone repository. Check your repository URL and credentials."
         exit 1
     fi
-    
+
     if [[ ! -d "$TEMPLATE_ROOT" ]]; then
         echo "❌ Templates directory '$TEMPLATE_SUBDIR' not found in repository"
         exit 1
@@ -212,87 +225,115 @@ clone_devcontainer_repo() {
 # Select template
 select_template() {
     TEMPLATE_DIRS=$(find "$TEMPLATE_ROOT" -maxdepth 1 -mindepth 1 -type d | xargs -n1 basename)
-    MENU_OPTIONS=()
-
-    for dir in $TEMPLATE_DIRS; do
-        META_FILE="$TEMPLATE_ROOT/$dir/metadata.json"
-        if [[ -f "$META_FILE" ]]; then
-            NAME=$(jq -r '.name // .id // "Unknown"' "$META_FILE")
-            DESC=$(jq -r '.description // "No description"' "$META_FILE")
-            MENU_OPTIONS+=("$dir" "$DESC")
-        else
-            # Fallback for templates without metadata
-            MENU_OPTIONS+=("$dir" "Template: $dir")
-        fi
-    done
     
-    if [[ ${#MENU_OPTIONS[@]} -eq 0 ]]; then
-        echo "❌ No templates found in $TEMPLATE_ROOT"
+    if [[ -z "$TEMPLATE_DIRS" ]]; then
+        dialog --title "Error" --msgbox "❌ No templates found in $TEMPLATE_ROOT" 8 60
         exit 1
     fi
 
-    TEMPLATE_NAME=$(whiptail --title "Choose Dev Container Template" \
-        --menu "Select a base template:" 20 78 10 "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3)
-    [[ -z "$TEMPLATE_NAME" ]] && echo "Cancelled." && exit 1
+    # Build menu options for dialog
+    local menu_items=()
+    for dir in $TEMPLATE_DIRS; do
+        META_FILE="$TEMPLATE_ROOT/$dir/metadata.json"
+        if [[ -f "$META_FILE" ]]; then
+            DESC=$(jq -r '.description // "No description"' "$META_FILE" 2>/dev/null || echo "No description")
+        else
+            DESC="Template: $dir"
+        fi
+        menu_items+=("$dir" "$DESC")
+    done
+
+    if ! dialog --title "Choose Dev Container Template" \
+        --menu "Select a base template:" 20 78 10 "${menu_items[@]}" 2>"$DIALOG_TEMP"; then
+        echo "Template selection cancelled."
+        exit 1
+    fi
+    
+    TEMPLATE_NAME=$(cat "$DIALOG_TEMP")
+    if [[ -z "$TEMPLATE_NAME" ]]; then
+        echo "❌ No template selected"
+        exit 1
+    fi
 }
 
 # Get project details
 get_project_details() {
     # Project parent directory
-    PARENT_DIR=$(whiptail --title "Select Project Location" --inputbox \
-        "Enter the parent directory where the new project should go:" 10 60 "$PROJECT_PARENT" 3>&1 1>&2 2>&3)
-    [[ -z "$PARENT_DIR" ]] && echo "Cancelled." && exit 1
+    if ! dialog --title "Select Project Location" --inputbox \
+        "Enter the parent directory where the new project should go:" 10 60 "$PROJECT_PARENT" 2>"$DIALOG_TEMP"; then
+        echo "Project setup cancelled."
+        exit 1
+    fi
+    PARENT_DIR=$(cat "$DIALOG_TEMP")
+    [[ -z "$PARENT_DIR" ]] && echo "Cancelled - no parent directory provided." && exit 1
     PARENT_DIR="${PARENT_DIR%/}"
 
     # Project name
-    PROJECT_NAME=$(whiptail --title "Project Name" --inputbox "Enter your new project name:" 8 50 3>&1 1>&2 2>&3)
-    [[ -z "$PROJECT_NAME" ]] && echo "Cancelled." && exit 1
+    if ! dialog --title "Project Name" --inputbox "Enter your new project name:" 8 50 2>"$DIALOG_TEMP"; then
+        echo "Project setup cancelled."
+        exit 1
+    fi
+    PROJECT_NAME=$(cat "$DIALOG_TEMP")
+    [[ -z "$PROJECT_NAME" ]] && echo "Cancelled - no project name provided." && exit 1
 
     DEST_DIR="$PARENT_DIR/$PROJECT_NAME"
 
     # Confirm details
-    if ! whiptail --title "Confirm" --yesno \
+    if ! dialog --title "Confirm Project Details" --yesno \
 "Project Name: $PROJECT_NAME
 Template: $TEMPLATE_NAME
 Destination: $DEST_DIR
 
-Continue?" 12 60; then
-        echo "Cancelled by user."
+Continue with project creation?" 12 60; then
+        echo "Project creation cancelled by user."
         exit 1
     fi
 
     # Validate destination
-    [[ -d "$DEST_DIR" ]] && whiptail --title "Error" --msgbox "❌ Project directory already exists:\n$DEST_DIR" 8 60 && exit 1
+    if [[ -d "$DEST_DIR" ]]; then
+        dialog --title "Error" --msgbox "❌ Project directory already exists:\n$DEST_DIR\n\nPlease choose a different name or location." 10 60
+        exit 1
+    fi
 }
 
 # Select features (only if features directory exists)
 select_features() {
     ALL_FEATURES=()
-    
+
     if [[ ! -d "$FEATURES_ROOT" ]]; then
         echo "ℹ️  No features directory found, skipping feature selection"
         return
     fi
 
     FEATURE_DIRS=$(find "$FEATURES_ROOT" -mindepth 1 -maxdepth 1 -type d | xargs -n1 basename 2>/dev/null || true)
-    
+
     if [[ -z "$FEATURE_DIRS" ]]; then
         echo "ℹ️  No features found, skipping feature selection"
         return
     fi
-    
-    FEATURE_MENU=()
+
+    # Build checklist options for dialog
+    local checklist_items=()
     for feat in $FEATURE_DIRS; do
         DESC=$(jq -r '.description // .id // "Feature"' "$FEATURES_ROOT/$feat/devcontainer-feature.json" 2>/dev/null || echo "Feature: $feat")
-        FEATURE_MENU+=("$feat" "$DESC" OFF)
+        checklist_items+=("$feat" "$DESC" "off")
     done
 
-    FEATURE_CHOICES_RAW=$(whiptail --title "Choose Features" --checklist \
-    "Select which features to include:" 20 60 10 "${FEATURE_MENU[@]}" 3>&1 1>&2 2>&3)
-    [[ $? -ne 0 ]] && echo "Cancelled at feature selection." && exit 1
+    if ! dialog --title "Choose Features" --checklist \
+        "Select which features to include:\n(Use SPACE to select, ENTER to confirm)" 20 70 10 "${checklist_items[@]}" 2>"$DIALOG_TEMP"; then
+        echo "Feature selection cancelled."
+        exit 1
+    fi
 
     # Process feature selection and dependencies
+    FEATURE_CHOICES_RAW=$(cat "$DIALOG_TEMP")
     read -ra USER_SELECTED <<< "$(echo "$FEATURE_CHOICES_RAW" | tr -d '"')"
+    
+    if [[ ${#USER_SELECTED[@]} -eq 0 ]]; then
+        echo "ℹ️  No features selected"
+        return
+    fi
+
     declare -A RESOLVED=()
     declare -A USER_MAP=()
     for f in "${USER_SELECTED[@]}"; do
@@ -333,18 +374,18 @@ select_features() {
 
     # Notify user of automatic additions
     if [[ ${#IMPLICIT_ADDITIONS[@]} -gt 0 ]]; then
-        MSG="The following dependent features were automatically added:\n\n"
+        local msg="The following dependent features were automatically added:\n\n"
         for f in "${IMPLICIT_ADDITIONS[@]}"; do
-            MSG+="- $f\n"
+            msg+="• $f\n"
         done
-        whiptail --title "Dependencies Added" --msgbox "$MSG" 15 60
+        dialog --title "Dependencies Added" --msgbox "$msg" 15 60
     fi
 }
 
 # Create project
 create_project() {
     TEMPLATE_PATH="$TEMPLATE_ROOT/$TEMPLATE_NAME"
-    
+
     # Create project structure
     mkdir -p "$DEST_DIR/.devcontainer"
     cp -r "$TEMPLATE_PATH/.devcontainer/." "$DEST_DIR/.devcontainer/"
@@ -380,6 +421,7 @@ cleanup() {
     if [[ -n "${DEVCONTAINER_LOCAL:-}" && -d "$DEVCONTAINER_LOCAL" ]]; then
         rm -rf "$DEVCONTAINER_LOCAL"
     fi
+    rm -f "$DIALOG_TEMP"
 }
 
 # Main function
@@ -389,42 +431,28 @@ main() {
 
     # Parse arguments first
     parse_args "$@"
-    echo "✅ parse_args done"
 
     # Load configuration
     load_config
-    echo "✅ load_config done"
 
     # Check dependencies
     check_dependencies
-    echo "✅ check_dependencies done"
 
     # Validate configuration
     validate_config
-    echo "✅ validate_config done"
 
     # Main workflow
     clone_devcontainer_repo
-    echo "✅ clone_devcontainer_repo done"
-
     select_template
-    echo "✅ select_template done: TEMPLATE_NAME=$TEMPLATE_NAME"
-
-    get_project_details || {
-        echo "⚠️  get_project_details failed — falling back to manual input"
-        read -rp "Enter parent directory: " PARENT_DIR
-        read -rp "Enter project name: " PROJECT_NAME
-        DEST_DIR="$PARENT_DIR/$PROJECT_NAME"
-    }
-    echo "✅ get_project_details done: PROJECT_NAME=$PROJECT_NAME DEST_DIR=$DEST_DIR"
-
+    get_project_details
     select_features
-    echo "✅ select_features done"
-
     create_project
-    echo "✅ create_project done"
+
+    # Success message with dialog
+    dialog --title "Success!" --msgbox "✅ Project created successfully!\n\nLocation: $DEST_DIR\n\nYou can now open this directory in VS Code with the Dev Containers extension." 10 60
 
     echo "✅ Project created at $DEST_DIR"
 }
 
+# Run main function with all arguments
 main "$@"
