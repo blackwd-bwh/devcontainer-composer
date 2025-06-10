@@ -6,7 +6,7 @@ set -euo pipefail
 # =============================================================================
 
 # Default configuration - can be overridden by config file or environment variables
-DEFAULT_CONFIG_FILE="$HOME/.devcontainer-scaffolder.conf"
+DEFAULT_CONFIG_FILE="$HOME/.devcontainer-composer.conf"
 DEFAULT_DEVCONTAINER_REPO=""
 DEFAULT_GHCR_NAMESPACE=""
 DEFAULT_PROJECT_PARENT="$HOME/code"
@@ -35,7 +35,7 @@ show_usage() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Dev Container Project Scaffolder - Create new projects from dev container templates
+Dev Container Composer - Create new projects from dev container templates
 
 OPTIONS:
     -r, --repo URL          Dev container repository URL
@@ -65,7 +65,7 @@ EOF
 
 # Setup wizard for first-time users
 setup_wizard() {
-    echo "🚀 Dev Container Scaffolder Setup"
+    echo "Dev Container Composer Setup"
     echo "=================================="
     echo
     
@@ -107,7 +107,7 @@ setup_wizard() {
     
     # Write configuration
     cat > "$DEFAULT_CONFIG_FILE" << EOF
-# Dev Container Scaffolder Configuration
+# Dev Container Composer Configuration
 DEVCONTAINER_REPO="$REPO_URL"
 GHCR_NAMESPACE="$NAMESPACE"
 PROJECT_PARENT="$PARENT"
@@ -117,7 +117,7 @@ FEATURES_SUBDIR="$FEATURES_DIR"
 EOF
     
     echo "✅ Configuration saved to $DEFAULT_CONFIG_FILE"
-    echo "You can now run the scaffolder without --setup"
+    echo "You can now run the composer without --setup"
     exit 0
 }
 

@@ -1,6 +1,6 @@
-# Dev Container Project Scaffolder
+# Dev Container Project composer
 
-A powerful interactive tool for creating new projects from dev container templates with automatic feature dependency resolution.
+An interactive tool for creating new projects from dev container templates with automatic feature dependency resolution.
 
 ## Features
 
@@ -14,13 +14,13 @@ A powerful interactive tool for creating new projects from dev container templat
 
 1. Download the script:
 ```bash
-curl -o devcontainer-scaffolder https://raw.githubusercontent.com/your-username/devcontainer-scaffolder/main/scaffolder.sh
-chmod +x devcontainer-scaffolder
+curl -o devcontainer-composer https://github.com/blackwd-bwh/devcontainer-composer/blob/main/devcontainer-compose
+chmod +x devcontainer-composer
 ```
 
 2. Move to your PATH:
 ```bash
-sudo mv devcontainer-scaffolder /usr/local/bin/
+sudo mv devcontainer-composer /usr/local/bin/
 ```
 
 ## Dependencies
@@ -48,7 +48,7 @@ devcontainer-scaffolder --setup
 
 2. **Create a new project:**
 ```bash
-devcontainer-scaffolder
+devcontainer-composer
 ```
 
 ## Configuration
@@ -56,13 +56,13 @@ devcontainer-scaffolder
 ### Setup Wizard
 Run the setup wizard to configure your repository and preferences:
 ```bash
-devcontainer-scaffolder --setup
+devcontainer-composer --setup
 ```
 
 ### Manual Configuration
-Create `~/.devcontainer-scaffolder.conf`:
+Create `~/.devcontainer-composer.conf`:
 ```bash
-# Dev Container Scaffolder Configuration
+# Dev Container composer Configuration
 DEVCONTAINER_REPO="git@github.com:username/dev-containers.git"
 GHCR_NAMESPACE="ghcr.io/username"
 PROJECT_PARENT="$HOME/projects"
@@ -76,19 +76,19 @@ You can also use environment variables:
 ```bash
 export DEVCONTAINER_REPO="git@github.com:username/dev-containers.git"
 export GHCR_NAMESPACE="ghcr.io/username"
-devcontainer-scaffolder
+devcontainer-composer
 ```
 
 ## Usage
 
 ### Basic Usage
 ```bash
-devcontainer-scaffolder
+devcontainer-composer
 ```
 
 ### Command Line Options
 ```bash
-devcontainer-scaffolder [OPTIONS]
+devcontainer-composer [OPTIONS]
 
 OPTIONS:
     -r, --repo URL          Dev container repository URL
@@ -104,17 +104,17 @@ OPTIONS:
 
 **Use a different repository:**
 ```bash
-devcontainer-scaffolder --repo "https://github.com/other-user/templates.git"
+devcontainer-composer --repo "https://github.com/other-user/templates.git"
 ```
 
 **Override project parent directory:**
 ```bash
-devcontainer-scaffolder --parent "/path/to/projects"
+devcontainer-composer --parent "/path/to/projects"
 ```
 
 **Use a specific branch:**
 ```bash
-devcontainer-scaffolder --branch "development"
+devcontainer-composer --branch "development"
 ```
 
 ## Repository Structure
@@ -173,7 +173,7 @@ Features can declare dependencies in `devcontainer-feature.json`:
 ## Customization
 
 ### Adding Custom Configuration
-The scaffolder supports injecting custom configuration into `devcontainer.json`. You can modify the script to add your own default settings, mounts, or environment variables.
+The composer supports injecting custom configuration into `devcontainer.json`. You can modify the script to add your own default settings, mounts, or environment variables.
 
 ### Supporting Different Repository Layouts
 If your repository uses a different structure, you can adjust the `TEMPLATE_SUBDIR` and `FEATURES_SUBDIR` configuration variables.
