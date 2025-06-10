@@ -1,0 +1,413 @@
+#!/bin/bash
+set -euo pipefail
+
+# =============================================================================
+# Dev Container Composer
+# =============================================================================
+
+# Default configuration - can be overridden by config file or environment variables
+DEFAULT_CONFIG_FILE="$HOME/.devcontainer-scaffolder.conf"
+DEFAULT_DEVCONTAINER_REPO=""
+DEFAULT_GHCR_NAMESPACE=""
+DEFAULT_PROJECT_PARENT="$HOME/code"
+DEFAULT_TEMPLATE_BRANCH="main"
+DEFAULT_TEMPLATE_SUBDIR="src"
+DEFAULT_FEATURES_SUBDIR="features"
+
+# Load configuration
+load_config() {
+    # Load from config file if it exists
+    if [[ -f "$DEFAULT_CONFIG_FILE" ]]; then
+        source "$DEFAULT_CONFIG_FILE"
+    fi
+    
+    # Environment variables override config file
+    DEVCONTAINER_REPO="${DEVCONTAINER_REPO:-${DEFAULT_DEVCONTAINER_REPO}}"
+    GHCR_NAMESPACE="${GHCR_NAMESPACE:-${DEFAULT_GHCR_NAMESPACE}}"
+    PROJECT_PARENT="${PROJECT_PARENT:-${DEFAULT_PROJECT_PARENT}}"
+    TEMPLATE_BRANCH="${TEMPLATE_BRANCH:-${DEFAULT_TEMPLATE_BRANCH}}"
+    TEMPLATE_SUBDIR="${TEMPLATE_SUBDIR:-${DEFAULT_TEMPLATE_SUBDIR}}"
+    FEATURES_SUBDIR="${FEATURES_SUBDIR:-${DEFAULT_FEATURES_SUBDIR}}"
+}
+
+# Show usage information
+show_usage() {
+    cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Dev Container Project Scaffolder - Create new projects from dev container templates
+
+OPTIONS:
+    -r, --repo URL          Dev container repository URL
+    -n, --namespace NAME    GHCR namespace for features
+    -p, --parent DIR        Parent directory for projects (default: $DEFAULT_PROJECT_PARENT)
+    -b, --branch BRANCH     Template repository branch (default: $DEFAULT_TEMPLATE_BRANCH)
+    -c, --config FILE       Configuration file (default: $DEFAULT_CONFIG_FILE)
+    -h, --help              Show this help message
+    --setup                 Run initial setup wizard
+
+CONFIGURATION:
+    Configuration can be set via:
+    1. Configuration file: $DEFAULT_CONFIG_FILE
+    2. Environment variables
+    3. Command line options (highest priority)
+
+    Example config file:
+        DEVCONTAINER_REPO="git@github.com:user/dev-containers.git"
+        GHCR_NAMESPACE="ghcr.io/user"
+        PROJECT_PARENT="$HOME/projects"
+        TEMPLATE_BRANCH="main"
+        TEMPLATE_SUBDIR="templates"
+        FEATURES_SUBDIR="features"
+
+EOF
+}
+
+# Setup wizard for first-time users
+setup_wizard() {
+    echo "🚀 Dev Container Scaffolder Setup"
+    echo "=================================="
+    echo
+    
+    # Get repository URL
+    REPO_URL=$(whiptail --title "Repository Setup" --inputbox \
+        "Enter your dev container repository URL (SSH or HTTPS):" 10 70 3>&1 1>&2 2>&3)
+    [[ -z "$REPO_URL" ]] && echo "Setup cancelled." && exit 1
+    
+    # Get GHCR namespace
+    NAMESPACE=$(whiptail --title "Feature Registry" --inputbox \
+        "Enter your GHCR namespace for features (e.g., ghcr.io/username):" 10 70 3>&1 1>&2 2>&3)
+    [[ -z "$NAMESPACE" ]] && echo "Setup cancelled." && exit 1
+    
+    # Get default project parent
+    PARENT=$(whiptail --title "Project Location" --inputbox \
+        "Enter default parent directory for projects:" 10 70 "$DEFAULT_PROJECT_PARENT" 3>&1 1>&2 2>&3)
+    [[ -z "$PARENT" ]] && echo "Setup cancelled." && exit 1
+    
+    # Optional: Advanced settings
+    if whiptail --title "Advanced Settings" --yesno \
+        "Would you like to configure advanced settings (branch, subdirectories)?" 8 60; then
+        
+        BRANCH=$(whiptail --title "Repository Branch" --inputbox \
+            "Template repository branch:" 8 50 "$DEFAULT_TEMPLATE_BRANCH" 3>&1 1>&2 2>&3)
+        BRANCH="${BRANCH:-$DEFAULT_TEMPLATE_BRANCH}"
+        
+        TEMPLATE_DIR=$(whiptail --title "Templates Directory" --inputbox \
+            "Subdirectory containing templates:" 8 50 "$DEFAULT_TEMPLATE_SUBDIR" 3>&1 1>&2 2>&3)
+        TEMPLATE_DIR="${TEMPLATE_DIR:-$DEFAULT_TEMPLATE_SUBDIR}"
+        
+        FEATURES_DIR=$(whiptail --title "Features Directory" --inputbox \
+            "Subdirectory containing features:" 8 50 "$DEFAULT_FEATURES_SUBDIR" 3>&1 1>&2 2>&3)
+        FEATURES_DIR="${FEATURES_DIR:-$DEFAULT_FEATURES_SUBDIR}"
+    else
+        BRANCH="$DEFAULT_TEMPLATE_BRANCH"
+        TEMPLATE_DIR="$DEFAULT_TEMPLATE_SUBDIR"
+        FEATURES_DIR="$DEFAULT_FEATURES_SUBDIR"
+    fi
+    
+    # Write configuration
+    cat > "$DEFAULT_CONFIG_FILE" << EOF
+# Dev Container Scaffolder Configuration
+DEVCONTAINER_REPO="$REPO_URL"
+GHCR_NAMESPACE="$NAMESPACE"
+PROJECT_PARENT="$PARENT"
+TEMPLATE_BRANCH="$BRANCH"
+TEMPLATE_SUBDIR="$TEMPLATE_DIR"
+FEATURES_SUBDIR="$FEATURES_DIR"
+EOF
+    
+    echo "✅ Configuration saved to $DEFAULT_CONFIG_FILE"
+    echo "You can now run the scaffolder without --setup"
+    exit 0
+}
+
+# Check dependencies
+check_dependencies() {
+    local missing=()
+    
+    command -v whiptail >/dev/null || missing+=("whiptail")
+    command -v jq >/dev/null || missing+=("jq")
+    command -v git >/dev/null || missing+=("git")
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "❌ Missing required dependencies: ${missing[*]}"
+        echo "Please install them and try again."
+        exit 1
+    fi
+}
+
+# Validate configuration
+validate_config() {
+    if [[ -z "$DEVCONTAINER_REPO" ]]; then
+        echo "❌ No dev container repository configured."
+        echo "Run: $(basename "$0") --setup"
+        exit 1
+    fi
+    
+    if [[ -z "$GHCR_NAMESPACE" ]]; then
+        echo "❌ No GHCR namespace configured."
+        echo "Run: $(basename "$0") --setup"
+        exit 1
+    fi
+}
+
+# Parse command line arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -r|--repo)
+                DEVCONTAINER_REPO="$2"
+                shift 2
+                ;;
+            -n|--namespace)
+                GHCR_NAMESPACE="$2"
+                shift 2
+                ;;
+            -p|--parent)
+                PROJECT_PARENT="$2"
+                shift 2
+                ;;
+            -b|--branch)
+                TEMPLATE_BRANCH="$2"
+                shift 2
+                ;;
+            -c|--config)
+                DEFAULT_CONFIG_FILE="$2"
+                shift 2
+                ;;
+            --setup)
+                setup_wizard
+                ;;
+            -h|--help)
+                show_usage
+                exit 0
+                ;;
+            *)
+                echo "Unknown option: $1"
+                show_usage
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# Clone dev container repository
+clone_devcontainer_repo() {
+    DEVCONTAINER_LOCAL="$(mktemp -d)"
+    TEMPLATE_ROOT="$DEVCONTAINER_LOCAL/$TEMPLATE_SUBDIR"
+    FEATURES_ROOT="$DEVCONTAINER_LOCAL/$FEATURES_SUBDIR"
+
+    echo "🔄 Cloning dev-container repo into temp directory..."
+    if ! git clone --depth 1 --branch "$TEMPLATE_BRANCH" "$DEVCONTAINER_REPO" "$DEVCONTAINER_LOCAL"; then
+        echo "❌ Failed to clone repository. Check your repository URL and credentials."
+        exit 1
+    fi
+    
+    if [[ ! -d "$TEMPLATE_ROOT" ]]; then
+        echo "❌ Templates directory '$TEMPLATE_SUBDIR' not found in repository"
+        exit 1
+    fi
+}
+
+# Select template
+select_template() {
+    TEMPLATE_DIRS=$(find "$TEMPLATE_ROOT" -maxdepth 1 -mindepth 1 -type d | xargs -n1 basename)
+    MENU_OPTIONS=()
+
+    for dir in $TEMPLATE_DIRS; do
+        META_FILE="$TEMPLATE_ROOT/$dir/metadata.json"
+        if [[ -f "$META_FILE" ]]; then
+            NAME=$(jq -r '.name // .id // "Unknown"' "$META_FILE")
+            DESC=$(jq -r '.description // "No description"' "$META_FILE")
+            MENU_OPTIONS+=("$dir" "$DESC")
+        else
+            # Fallback for templates without metadata
+            MENU_OPTIONS+=("$dir" "Template: $dir")
+        fi
+    done
+    
+    if [[ ${#MENU_OPTIONS[@]} -eq 0 ]]; then
+        echo "❌ No templates found in $TEMPLATE_ROOT"
+        exit 1
+    fi
+
+    TEMPLATE_NAME=$(whiptail --title "Choose Dev Container Template" \
+        --menu "Select a base template:" 20 78 10 "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3)
+    [[ -z "$TEMPLATE_NAME" ]] && echo "Cancelled." && exit 1
+}
+
+# Get project details
+get_project_details() {
+    # Project parent directory
+    PARENT_DIR=$(whiptail --title "Select Project Location" --inputbox \
+        "Enter the parent directory where the new project should go:" 10 60 "$PROJECT_PARENT" 3>&1 1>&2 2>&3)
+    [[ -z "$PARENT_DIR" ]] && echo "Cancelled." && exit 1
+    PARENT_DIR="${PARENT_DIR%/}"
+
+    # Project name
+    PROJECT_NAME=$(whiptail --title "Project Name" --inputbox "Enter your new project name:" 8 50 3>&1 1>&2 2>&3)
+    [[ -z "$PROJECT_NAME" ]] && echo "Cancelled." && exit 1
+
+    DEST_DIR="$PARENT_DIR/$PROJECT_NAME"
+
+    # Confirm details
+    if ! whiptail --title "Confirm" --yesno \
+"Project Name: $PROJECT_NAME
+Template: $TEMPLATE_NAME
+Destination: $DEST_DIR
+
+Continue?" 12 60; then
+        echo "Cancelled by user."
+        exit 1
+    fi
+
+    # Validate destination
+    [[ -d "$DEST_DIR" ]] && whiptail --title "Error" --msgbox "❌ Project directory already exists:\n$DEST_DIR" 8 60 && exit 1
+}
+
+# Select features (only if features directory exists)
+select_features() {
+    ALL_FEATURES=()
+    
+    if [[ ! -d "$FEATURES_ROOT" ]]; then
+        echo "ℹ️  No features directory found, skipping feature selection"
+        return
+    fi
+
+    FEATURE_DIRS=$(find "$FEATURES_ROOT" -mindepth 1 -maxdepth 1 -type d | xargs -n1 basename 2>/dev/null || true)
+    
+    if [[ -z "$FEATURE_DIRS" ]]; then
+        echo "ℹ️  No features found, skipping feature selection"
+        return
+    fi
+    
+    FEATURE_MENU=()
+    for feat in $FEATURE_DIRS; do
+        DESC=$(jq -r '.description // .id // "Feature"' "$FEATURES_ROOT/$feat/devcontainer-feature.json" 2>/dev/null || echo "Feature: $feat")
+        FEATURE_MENU+=("$feat" "$DESC" OFF)
+    done
+
+    FEATURE_CHOICES_RAW=$(whiptail --title "Choose Features" --checklist \
+    "Select which features to include:" 20 60 10 "${FEATURE_MENU[@]}" 3>&1 1>&2 2>&3)
+    [[ $? -ne 0 ]] && echo "Cancelled at feature selection." && exit 1
+
+    # Process feature selection and dependencies
+    read -ra USER_SELECTED <<< "$(echo "$FEATURE_CHOICES_RAW" | tr -d '"')"
+    declare -A RESOLVED=()
+    declare -A USER_MAP=()
+    for f in "${USER_SELECTED[@]}"; do
+        RESOLVED["$f"]=1
+        USER_MAP["$f"]=1
+    done
+
+    # Recursive dependency resolver
+    resolve_dependencies() {
+        local base="$1"
+        local feature="$2"
+        local path="$base/$feature/devcontainer-feature.json"
+
+        if [[ ! -f "$path" ]]; then return; fi
+
+        local deps
+        deps=$(jq -r '.dependsOn | keys[]?' "$path" 2>/dev/null || true)
+        for dep in $deps; do
+            local dep_name="${dep#./features/}"
+            if [[ -z "${RESOLVED[$dep_name]+_}" ]]; then
+                RESOLVED["$dep_name"]=1
+                resolve_dependencies "$base" "$dep_name"
+            fi
+        done
+    }
+
+    for feat in "${USER_SELECTED[@]}"; do
+        resolve_dependencies "$FEATURES_ROOT" "$feat"
+    done
+
+    ALL_FEATURES=($(printf "%s\n" "${!RESOLVED[@]}" | sort))
+    IMPLICIT_ADDITIONS=()
+    for f in "${ALL_FEATURES[@]}"; do
+        if [[ -z "${USER_MAP[$f]+_}" ]]; then
+            IMPLICIT_ADDITIONS+=("$f")
+        fi
+    done
+
+    # Notify user of automatic additions
+    if [[ ${#IMPLICIT_ADDITIONS[@]} -gt 0 ]]; then
+        MSG="The following dependent features were automatically added:\n\n"
+        for f in "${IMPLICIT_ADDITIONS[@]}"; do
+            MSG+="- $f\n"
+        done
+        whiptail --title "Dependencies Added" --msgbox "$MSG" 15 60
+    fi
+}
+
+# Create project
+create_project() {
+    TEMPLATE_PATH="$TEMPLATE_ROOT/$TEMPLATE_NAME"
+    
+    # Create project structure
+    mkdir -p "$DEST_DIR/.devcontainer"
+    cp -r "$TEMPLATE_PATH/.devcontainer/." "$DEST_DIR/.devcontainer/"
+    cp "$TEMPLATE_PATH/metadata.json" "$DEST_DIR/.devcontainer/" 2>/dev/null || true
+    cp "$TEMPLATE_PATH/README.md" "$DEST_DIR/" 2>/dev/null || true
+    mkdir -p "$DEST_DIR/src"
+
+    # Process devcontainer.json
+    DEVCONTAINER_JSON="$DEST_DIR/.devcontainer/devcontainer.json"
+    if ! jq empty "$DEVCONTAINER_JSON" 2>/dev/null; then
+        echo "❌ ERROR: Invalid devcontainer.json in template. Aborting."
+        exit 1
+    fi
+
+    # Add features if any were selected
+    if [[ ${#ALL_FEATURES[@]} -gt 0 && -n "$GHCR_NAMESPACE" ]]; then
+        FEATURES_JSON=$(printf "%s\n" "${ALL_FEATURES[@]}" \
+            | sed "s|^|$GHCR_NAMESPACE/|" \
+            | jq -Rs 'split("\n")[:-1] | map({ (.): {} }) | add')
+        jq --argjson features "$FEATURES_JSON" '.features = $features' \
+            "$DEVCONTAINER_JSON" > "$DEVCONTAINER_JSON.tmp" && mv "$DEVCONTAINER_JSON.tmp" "$DEVCONTAINER_JSON"
+    fi
+
+    # Initialize git repository
+    cd "$DEST_DIR"
+    git init -b main
+    git add .
+    git commit -m "Initial commit using $TEMPLATE_NAME template"
+}
+
+# Cleanup function
+cleanup() {
+    if [[ -n "${DEVCONTAINER_LOCAL:-}" && -d "$DEVCONTAINER_LOCAL" ]]; then
+        rm -rf "$DEVCONTAINER_LOCAL"
+    fi
+}
+
+# Main function
+main() {
+    # Setup cleanup trap
+    trap cleanup EXIT
+    
+    # Parse arguments first
+    parse_args "$@"
+    
+    # Load configuration
+    load_config
+    
+    # Check dependencies
+    check_dependencies
+    
+    # Validate configuration
+    validate_config
+    
+    # Main workflow
+    clone_devcontainer_repo
+    select_template
+    get_project_details
+    select_features
+    create_project
+    
+    echo "✅ Project created at $DEST_DIR"
+}
+
+# Run main function with all arguments
+main "$@"
