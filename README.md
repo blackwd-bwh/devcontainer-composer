@@ -4,27 +4,27 @@ An interactive shell-based tool to generate Dev Container projects from template
 
 ---
 
-## 🚀 Features
+## Features
 
-### ✅ Interactive Dialog-Based Workflow
+### Interactive Dialog-Based Workflow
 - Full-screen terminal dialogs (powered by `dialog`) walk you through template selection, project naming, and feature configuration.
 - Easy-to-use UI, even in headless terminals or remote shells.
 
-### 🧱 Template Management
+### Template Management
 - Auto-discovers templates from a dedicated repository structure.
 - Select a template interactively based on metadata and descriptions.
 
-### 🌟 Feature Selection with Dependency Resolution
+### Feature Selection with Dependency Resolution
 - Automatically resolves `dependsOn` from each feature’s `devcontainer-feature.json`.
 - Notifies you of any **implicitly added** dependencies.
 
 ---
 
-### 🔗 How Dependency Resolution Works
+### How Dependency Resolution Works
 
 When you select features during project creation, the Composer intelligently handles dependencies declared in each feature’s `devcontainer-feature.json`. Here's how it works:
 
-#### 📌 Feature Declaration
+### Feature Declaration
 
 Each feature includes a `devcontainer-feature.json` file that may define dependencies:
 
@@ -40,7 +40,7 @@ Each feature includes a `devcontainer-feature.json` file that may define depende
 
 This means `aws-cli` depends on `docker`.
 
-#### 🔁 Recursive Resolution
+#### Recursive Resolution
 
 - Composer starts with your selected features.
 - It examines each one for a `dependsOn` section.
@@ -49,29 +49,29 @@ This means `aws-cli` depends on `docker`.
 
 This ensures that **all transitive dependencies** are automatically included.
 
-#### ✅ User Feedback
+#### User Feedback
 
 - After resolving dependencies, the tool informs you which features were auto-included.
 - Only your original selections are marked as "explicit"; all others are marked as "implicit".
 
-#### 🧠 De-duplication and Safety
+#### De-duplication and Safety
 
 - The resolver uses hash maps to prevent duplicates.
 - Infinite loops and circular dependencies are avoided by tracking which features are already resolved.
 
 ---
 
-### 🔄 One-Time Setup Wizard
+### One-Time Setup Wizard
 - Prompts for Git repo, GHCR namespace, and defaults.
 - Saves config to `~/.devcontainer-composer.conf`.
 
 ---
 
-## ⚙️ Configuration System
+## Configuration System
 
 The Composer supports a **layered configuration system** to control behavior:
 
-### 1. 📂 Config File (`~/.devcontainer-composer.conf`)
+### 1. Config File (`~/.devcontainer-composer.conf`)
 
 Example:
 ```bash
@@ -85,20 +85,20 @@ FEATURES_SUBDIR="features"
 
 This file is automatically created by the setup wizard.
 
-### 2. 🌿 Environment Variables (override config file)
+### 2. Environment Variables (override config file)
 ```bash
 export DEVCONTAINER_REPO="..."
 export GHCR_NAMESPACE="..."
 ```
 
-### 3. 🧾 Command Line Options (override everything)
+### 3. Command Line Options (override everything)
 ```bash
 devcontainer-compose --repo "..." --namespace "..." --parent "..." --branch "..."
 ```
 
 ---
 
-## 🧾 Command Line Usage
+## Command Line Usage
 
 Run `devcontainer-compose --help` to see:
 
@@ -119,7 +119,7 @@ OPTIONS:
 
 ---
 
-## 🧪 Quick Start
+## Quick Start
 
 ### First-time setup:
 ```bash
@@ -133,7 +133,7 @@ devcontainer-compose
 
 ---
 
-## 🧩 Repository Layout
+## Repository Layout
 
 ```
 your-dev-containers/
@@ -155,7 +155,7 @@ your-dev-containers/
 
 ---
 
-## 📌 How It Works
+## How It Works
 
 1. **Clone**: A temporary clone of your dev container template repo is created.  
 2. **Select Template**: You choose a dev container template via a dialog UI.  
@@ -165,7 +165,7 @@ your-dev-containers/
 
 ---
 
-## 🧠 Advanced Behavior
+## Advanced Behavior
 
 - **Auto-detects and injects**:
   - `.devcontainer/devcontainer.json` validation  
@@ -183,7 +183,7 @@ your-dev-containers/
 
 ---
 
-## 🧼 Troubleshooting
+## Troubleshooting
 
 | Problem                         | Solution                                                                 |
 |---------------------------------|--------------------------------------------------------------------------|
