@@ -364,7 +364,14 @@ select_features() {
         resolve_dependencies "$FEATURES_ROOT" "$feat"
     done
 
-    ALL_FEATURES=($(printf "%s\n" "${!RESOLVED[@]}" | sort))
+    ALL_FEATURES=($(for f in "${!RESOLVED[@]}"; do
+      if [[ "$f" == ghcr.io/* ]]; then
+        echo "$f"
+      else
+        echo "$GHCR_NAMESPACE/$f:latest"
+      fi
+    done | sort))
+
     IMPLICIT_ADDITIONS=()
     for f in "${ALL_FEATURES[@]}"; do
         if [[ -z "${USER_MAP[$f]+_}" ]]; then
@@ -482,7 +489,13 @@ main() {
     # Success message with dialog
     dialog --title "Success!" --msgbox "✅ Project created successfully!\n\nLocation: $DEST_DIR\n\nYou can now open this directory in VS Code with the Dev Containers extension." 10 60
 
-    echo "✅ Project created at $DEST_DIR"
+    echo "Project Summary"
+    echo "Name: $PROJECT_NAME"
+    echo "Template: $TEMPLATE_NAME"
+    echo "Features:"
+    printf "  - %s\n" "${ALL_FEATURES[@]}"
+    echo "Destination: $DEST_DIR"
+
 }
 
 # Run main function with all arguments
