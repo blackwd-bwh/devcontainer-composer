@@ -4,7 +4,7 @@ An interactive tool for creating new projects from dev container templates with 
 
 ## Features
 
-- **Interactive Template Selection** - Browse and select from your dev container templates
+- **Interactive Template Selection** - Browse and select templates through a dialog-based interface
 - **Feature Management** - Add features with automatic dependency resolution
 - **Configurable** - Support for different repositories and namespaces
 - **One-time Setup** - Configure once, use everywhere
@@ -14,41 +14,42 @@ An interactive tool for creating new projects from dev container templates with 
 
 1. Download the script:
 ```bash
-curl -o devcontainer-composer https://github.com/blackwd-bwh/devcontainer-composer/blob/main/devcontainer-compose
-chmod +x devcontainer-composer
+curl -O \
+  https://raw.githubusercontent.com/blackwd-bwh/devcontainer-composer/main/devcontainer-compose.sh
+chmod +x devcontainer-compose.sh
 ```
 
 2. Move to your PATH:
 ```bash
-sudo mv devcontainer-composer /usr/local/bin/
+sudo mv devcontainer-compose.sh /usr/local/bin/devcontainer-compose
 ```
 
 ## Dependencies
 
-- `whiptail` (for interactive menus)
+- `dialog` (for interactive menus)
 - `jq` (for JSON processing)
 - `git` (for repository operations)
 
 Install on Ubuntu/Debian:
 ```bash
-sudo apt install whiptail jq git
+sudo apt install dialog jq git
 ```
 
 Install on macOS:
 ```bash
-brew install newt jq git
+brew install dialog jq git
 ```
 
 ## Quick Start
 
 1. **First-time setup:**
 ```bash
-devcontainer-scaffolder --setup
+devcontainer-compose --setup
 ```
 
 2. **Create a new project:**
 ```bash
-devcontainer-composer
+devcontainer-compose
 ```
 
 ## Configuration
@@ -56,7 +57,7 @@ devcontainer-composer
 ### Setup Wizard
 Run the setup wizard to configure your repository and preferences:
 ```bash
-devcontainer-composer --setup
+devcontainer-compose --setup
 ```
 
 ### Manual Configuration
@@ -76,19 +77,19 @@ You can also use environment variables:
 ```bash
 export DEVCONTAINER_REPO="git@github.com:username/dev-containers.git"
 export GHCR_NAMESPACE="ghcr.io/username"
-devcontainer-composer
+devcontainer-compose
 ```
 
 ## Usage
 
 ### Basic Usage
 ```bash
-devcontainer-composer
+devcontainer-compose
 ```
 
 ### Command Line Options
 ```bash
-devcontainer-composer [OPTIONS]
+devcontainer-compose [OPTIONS]
 
 OPTIONS:
     -r, --repo URL          Dev container repository URL
@@ -104,17 +105,17 @@ OPTIONS:
 
 **Use a different repository:**
 ```bash
-devcontainer-composer --repo "https://github.com/other-user/templates.git"
+devcontainer-compose --repo "https://github.com/other-user/templates.git"
 ```
 
 **Override project parent directory:**
 ```bash
-devcontainer-composer --parent "/path/to/projects"
+devcontainer-compose --parent "/path/to/projects"
 ```
 
 **Use a specific branch:**
 ```bash
-devcontainer-composer --branch "development"
+devcontainer-compose --branch "development"
 ```
 
 ## Repository Structure
