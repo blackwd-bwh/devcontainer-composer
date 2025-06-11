@@ -1,69 +1,80 @@
-# Dev Container Project composer
+# Dev Container Project Composer
 
-An interactive tool for creating new projects from dev container templates with automatic feature dependency resolution.
+An interactive shell-based tool to generate Dev Container projects from templates with rich customization, dependency resolution, and automatic configuration injection. Perfect for teams standardizing development environments using Dev Containers.
 
-## Features
+---
 
-- **Interactive Template Selection** - Browse and select templates through a dialog-based interface
-- **Feature Management** - Add features with automatic dependency resolution
-- **Configurable** - Support for different repositories and namespaces
-- **One-time Setup** - Configure once, use everywhere
-- **Smart Project Creation** - Automatic git initialization and structure setup
+## 🚀 Features
 
-## Installation
+### ✅ Interactive Dialog-Based Workflow
+- Full-screen terminal dialogs (powered by `dialog`) walk you through template selection, project naming, and feature configuration.
+- Easy-to-use UI, even in headless terminals or remote shells.
 
-1. Download the script:
-```bash
-curl -O \
-  https://raw.githubusercontent.com/blackwd-bwh/devcontainer-composer/main/devcontainer-compose.sh
-chmod +x devcontainer-compose.sh
+### 🧱 Template Management
+- Auto-discovers templates from a dedicated repository structure.
+- Select a template interactively based on metadata and descriptions.
+
+### 🌟 Feature Selection with Dependency Resolution
+- Automatically resolves `dependsOn` from each feature’s `devcontainer-feature.json`.
+- Notifies you of any **implicitly added** dependencies.
+
+---
+
+### 🔗 How Dependency Resolution Works
+
+When you select features during project creation, the Composer intelligently handles dependencies declared in each feature’s `devcontainer-feature.json`. Here's how it works:
+
+#### 📌 Feature Declaration
+
+Each feature includes a `devcontainer-feature.json` file that may define dependencies:
+
+```json
+{
+  "id": "aws-cli",
+  "description": "AWS CLI Tools",
+  "dependsOn": {
+    "./features/docker": {}
+  }
+}
 ```
 
-2. Move to your PATH:
+This means `aws-cli` depends on `docker`.
+
+#### 🔁 Recursive Resolution
+
+- Composer starts with your selected features.
+- It examines each one for a `dependsOn` section.
+- All listed dependencies are added.
+- The resolver then recursively checks dependencies of those dependencies, and so on.
+
+This ensures that **all transitive dependencies** are automatically included.
+
+#### ✅ User Feedback
+
+- After resolving dependencies, the tool informs you which features were auto-included.
+- Only your original selections are marked as "explicit"; all others are marked as "implicit".
+
+#### 🧠 De-duplication and Safety
+
+- The resolver uses hash maps to prevent duplicates.
+- Infinite loops and circular dependencies are avoided by tracking which features are already resolved.
+
+---
+
+### 🔄 One-Time Setup Wizard
+- Prompts for Git repo, GHCR namespace, and defaults.
+- Saves config to `~/.devcontainer-composer.conf`.
+
+---
+
+## ⚙️ Configuration System
+
+The Composer supports a **layered configuration system** to control behavior:
+
+### 1. 📂 Config File (`~/.devcontainer-composer.conf`)
+
+Example:
 ```bash
-sudo mv devcontainer-compose.sh /usr/local/bin/devcontainer-compose
-```
-
-## Dependencies
-
-- `dialog` (for interactive menus)
-- `jq` (for JSON processing)
-- `git` (for repository operations)
-
-Install on Ubuntu/Debian:
-```bash
-sudo apt install dialog jq git
-```
-
-Install on macOS:
-```bash
-brew install dialog jq git
-```
-
-## Quick Start
-
-1. **First-time setup:**
-```bash
-devcontainer-compose --setup
-```
-
-2. **Create a new project:**
-```bash
-devcontainer-compose
-```
-
-## Configuration
-
-### Setup Wizard
-Run the setup wizard to configure your repository and preferences:
-```bash
-devcontainer-compose --setup
-```
-
-### Manual Configuration
-Create `~/.devcontainer-composer.conf`:
-```bash
-# Dev Container composer Configuration
 DEVCONTAINER_REPO="git@github.com:username/dev-containers.git"
 GHCR_NAMESPACE="ghcr.io/username"
 PROJECT_PARENT="$HOME/projects"
@@ -72,59 +83,61 @@ TEMPLATE_SUBDIR="src"
 FEATURES_SUBDIR="features"
 ```
 
-### Environment Variables
-You can also use environment variables:
+This file is automatically created by the setup wizard.
+
+### 2. 🌿 Environment Variables (override config file)
 ```bash
-export DEVCONTAINER_REPO="git@github.com:username/dev-containers.git"
-export GHCR_NAMESPACE="ghcr.io/username"
-devcontainer-compose
+export DEVCONTAINER_REPO="..."
+export GHCR_NAMESPACE="..."
 ```
 
-## Usage
-
-### Basic Usage
+### 3. 🧾 Command Line Options (override everything)
 ```bash
-devcontainer-compose
+devcontainer-compose --repo "..." --namespace "..." --parent "..." --branch "..."
 ```
 
-### Command Line Options
-```bash
-devcontainer-compose [OPTIONS]
+---
+
+## 🧾 Command Line Usage
+
+Run `devcontainer-compose --help` to see:
+
+```text
+Usage: devcontainer-compose [OPTIONS]
+
+Dev Container Composer - Create new projects from dev container templates
 
 OPTIONS:
     -r, --repo URL          Dev container repository URL
     -n, --namespace NAME    GHCR namespace for features
-    -p, --parent DIR        Parent directory for projects
-    -b, --branch BRANCH     Template repository branch
-    -c, --config FILE       Configuration file
-    -h, --help              Show help message
-    --setup                 Run setup wizard
+    -p, --parent DIR        Parent directory for projects (default: ~/code)
+    -b, --branch BRANCH     Template repository branch (default: main)
+    -c, --config FILE       Configuration file (default: ~/.devcontainer-composer.conf)
+    -h, --help              Show this help message
+    --setup                 Run initial setup wizard
 ```
 
-### Examples
+---
 
-**Use a different repository:**
+## 🧪 Quick Start
+
+### First-time setup:
 ```bash
-devcontainer-compose --repo "https://github.com/other-user/templates.git"
+devcontainer-compose --setup
 ```
 
-**Override project parent directory:**
+### Create a new project:
 ```bash
-devcontainer-compose --parent "/path/to/projects"
+devcontainer-compose
 ```
 
-**Use a specific branch:**
-```bash
-devcontainer-compose --branch "development"
-```
+---
 
-## Repository Structure
-
-Your dev container repository should follow this structure:
+## 🧩 Repository Layout
 
 ```
 your-dev-containers/
-├── src/                    # Templates directory
+├── src/
 │   ├── python/
 │   │   ├── .devcontainer/
 │   │   │   ├── devcontainer.json
@@ -132,87 +145,50 @@ your-dev-containers/
 │   │   ├── metadata.json
 │   │   └── README.md
 │   └── nodejs/
-│       ├── .devcontainer/
-│       └── metadata.json
-└── features/               # Features directory (optional)
-    ├── docker/
-    │   └── devcontainer-feature.json
-    └── aws-cli/
-        └── devcontainer-feature.json
+│       └── .devcontainer/
+├── features/
+│   ├── docker/
+│   │   └── devcontainer-feature.json
+│   └── aws-cli/
+│       └── devcontainer-feature.json
 ```
 
-### Template Metadata
-Each template should have a `metadata.json` file:
-```json
-{
-  "id": "python",
-  "name": "Python Development",
-  "description": "Python development environment with common tools"
-}
-```
+---
 
-### Feature Dependencies
-Features can declare dependencies in `devcontainer-feature.json`:
-```json
-{
-  "id": "my-feature",
-  "description": "My awesome feature",
-  "dependsOn": {
-    "./features/docker": {}
-  }
-}
-```
+## 📌 How It Works
 
-## How It Works
+1. **Clone**: A temporary clone of your dev container template repo is created.  
+2. **Select Template**: You choose a dev container template via a dialog UI.  
+3. **Name & Place**: Enter your project name and desired directory.  
+4. **Add Features**: Choose optional devcontainer features with auto-resolved dependencies.  
+5. **Create Project**: Final directory is scaffolded, config injected, and Git initialized.
 
-1. **Template Selection** - Browse available templates from your repository
-2. **Project Details** - Specify project name and location
-3. **Feature Selection** - Choose features with automatic dependency resolution
-4. **Project Creation** - Copy template files, inject features, initialize git
-5. **Ready to Go** - Open in VS Code with dev containers
+---
 
-## Customization
+## 🧠 Advanced Behavior
 
-### Adding Custom Configuration
-The composer supports injecting custom configuration into `devcontainer.json`. You can modify the script to add your own default settings, mounts, or environment variables.
+- **Auto-detects and injects**:
+  - `.devcontainer/devcontainer.json` validation  
+  - Terminal profile settings for `zsh`  
+  - Dotfile + SSH mount configs  
+  - AWS credentials mount points  
 
-### Supporting Different Repository Layouts
-If your repository uses a different structure, you can adjust the `TEMPLATE_SUBDIR` and `FEATURES_SUBDIR` configuration variables.
+- **Dependency recursion**:
+  - Handles multiple levels of `dependsOn` and avoids duplication
+  - Shows you what was added on your behalf
 
-## Troubleshooting
+- **Safe and idempotent**:
+  - Skips overwriting existing projects  
+  - Cleans temp dirs even on user cancellation
 
-### Common Issues
+---
 
-**"No templates found"**
-- Check that your repository URL is correct
-- Verify the `TEMPLATE_SUBDIR` matches your repository structure
-- Ensure templates have the correct directory structure
+## 🧼 Troubleshooting
 
-**"Failed to clone repository"**
-- Verify your SSH keys are set up correctly
-- Check that the repository URL is accessible
-- Try using HTTPS instead of SSH
+| Problem                         | Solution                                                                 |
+|---------------------------------|--------------------------------------------------------------------------|
+| No templates found              | Check your repo URL and `TEMPLATE_SUBDIR` setting                        |
+| Invalid `devcontainer.json`     | Run `jq .` on the file in your template to confirm it's valid            |
+| Repo clone fails                | Confirm SSH keys and Git access; try `https://` URL for debugging        |
+| Dialogs don’t render properly   | Run in a full terminal (not VS Code’s internal terminal) or use SSH+tmux |
 
-**"Invalid devcontainer.json"**
-- Ensure your template's `devcontainer.json` is valid JSON
-- Check for syntax errors in the template files
-
-### Debug Mode
-For debugging, you can modify the script to add `set -x` at the top to see detailed execution.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test with different repository structures
-5. Submit a pull request
-
-## License
-
-MIT License - see LICENSE file for details.
-
-## Acknowledgments
-
-- Inspired by the VS Code Dev Containers extension
-- Built for the dev container community
