@@ -13,6 +13,16 @@ DEFAULT_PROJECT_PARENT="$HOME/code"
 DEFAULT_TEMPLATE_BRANCH="main"
 DEFAULT_TEMPLATE_SUBDIR="src"
 DEFAULT_FEATURES_SUBDIR="features"
+DEFAULT_MANIFEST_FILE="manifest.json"
+
+# Manifest file path (set via --manifest). If not specified, defaults to
+# ./manifest.json when that file exists.
+MANIFEST_FILE=""
+USE_MANIFEST=0
+MANIFEST_SPECIFIED=0
+TEMPLATE_GHCR=""
+TEMPLATE_TAG=""
+FEATURE_BLOCK=""
 
 # Dialog temporary file for responses
 DIALOG_TEMP=$(mktemp)
@@ -46,6 +56,7 @@ OPTIONS:
     -n, --namespace NAME    GHCR namespace for features
     -p, --parent DIR        Parent directory for projects (default: $DEFAULT_PROJECT_PARENT)
     -b, --branch BRANCH     Template repository branch (default: $DEFAULT_TEMPLATE_BRANCH)
+    -m, --manifest FILE     Path to manifest file (default: $DEFAULT_MANIFEST_FILE if present)
     -c, --config FILE       Configuration file (default: $DEFAULT_CONFIG_FILE)
     -h, --help              Show this help message
     --setup                 Run initial setup wizard
@@ -184,6 +195,11 @@ parse_args() {
                 TEMPLATE_BRANCH="$2"
                 shift 2
                 ;;
+            -m|--manifest)
+                MANIFEST_FILE="$2"
+                MANIFEST_SPECIFIED=1
+                shift 2
+                ;;
             -c|--config)
                 DEFAULT_CONFIG_FILE="$2"
                 shift 2
@@ -254,6 +270,26 @@ select_template() {
         echo "❌ No template selected"
         exit 1
     fi
+}
+
+# Select template using manifest
+select_template_manifest() {
+    local menu_items=()
+    while IFS=$'\t' read -r id desc; do
+        menu_items+=("$id" "$desc")
+    done < <(jq -r '.templates[] | [.id, .description] | @tsv' "$MANIFEST_FILE")
+
+    if ! dialog --title "Choose Template" \
+        --menu "Select a base template:" 20 60 10 "${menu_items[@]}" 2>"$DIALOG_TEMP"; then
+        echo "Template selection cancelled."
+        exit 1
+    fi
+
+    TEMPLATE_NAME=$(cat "$DIALOG_TEMP")
+    [[ -z "$TEMPLATE_NAME" ]] && echo "❌ No template selected" && exit 1
+
+    TEMPLATE_GHCR=$(jq -r --arg id "$TEMPLATE_NAME" '.templates[] | select(.id == $id) | .ghcr' "$MANIFEST_FILE")
+    TEMPLATE_TAG=$(jq -r --arg id "$TEMPLATE_NAME" '.templates[] | select(.id == $id) | .defaultTag' "$MANIFEST_FILE")
 }
 
 # Get project details
@@ -389,31 +425,76 @@ select_features() {
     fi
 }
 
-# Create project
-create_project() {
-    TEMPLATE_PATH="$TEMPLATE_ROOT/$TEMPLATE_NAME"
+# Select features using manifest
+select_features_manifest() {
+    FEATURE_BLOCK="{}"
+    local items
+    items=$(jq -r '.features[] | [.id, .description] | @tsv' "$MANIFEST_FILE")
+    if [[ -z "$items" ]]; then
+        echo "ℹ️  No features defined in manifest"
+        return
+    fi
 
-    # Create project structure
-    mkdir -p "$DEST_DIR/.devcontainer"
-    cp -r "$TEMPLATE_PATH/.devcontainer/." "$DEST_DIR/.devcontainer/"
-    cp "$TEMPLATE_PATH/metadata.json" "$DEST_DIR/.devcontainer/" 2>/dev/null || true
-    cp "$TEMPLATE_PATH/README.md" "$DEST_DIR/" 2>/dev/null || true
-    mkdir -p "$DEST_DIR/src"
+    local checklist_items=()
+    while IFS=$'\t' read -r id desc; do
+        checklist_items+=("$id" "$desc" "off")
+    done <<< "$items"
 
-    # Process devcontainer.json
-    DEVCONTAINER_JSON="$DEST_DIR/.devcontainer/devcontainer.json"
-    if ! jq empty "$DEVCONTAINER_JSON" 2>/dev/null; then
-        echo "❌ ERROR: Invalid devcontainer.json in template. Aborting."
+    if ! dialog --title "Select Features" --checklist \
+        "Choose features to include:" 20 70 10 "${checklist_items[@]}" 2>"$DIALOG_TEMP"; then
+        echo "Feature selection cancelled."
         exit 1
     fi
 
-    # Add features if any were selected
-    if [[ ${#ALL_FEATURES[@]} -gt 0 && -n "$GHCR_NAMESPACE" ]]; then
-        FEATURES_JSON=$(printf "%s\n" "${ALL_FEATURES[@]}" \
-            | sed "s|^|$GHCR_NAMESPACE/|" \
-            | jq -Rs 'split("\n")[:-1] | map({ (.): {} }) | add')
-        jq --argjson features "$FEATURES_JSON" '.features = $features' \
-            "$DEVCONTAINER_JSON" > "$DEVCONTAINER_JSON.tmp" && mv "$DEVCONTAINER_JSON.tmp" "$DEVCONTAINER_JSON"
+    local selected
+    selected=$(tr -d '"' < "$DIALOG_TEMP")
+    read -ra FEATURE_IDS <<< "$selected"
+
+    FEATURE_BLOCK=$(jq -r --argjson ids "$(printf '%s\n' "${FEATURE_IDS[@]}" | jq -R . | jq -s .)" \
+        --argjson features "$(jq '.features' "$MANIFEST_FILE")" \
+        '($features | map(select(.id as $id | $ids | index($id)))) | map("\(.ghcr):\(.defaultTag)")' \
+        <<< '{}' | jq -R 'split("\\n")[:-1] | map({(.): {}}) | add')
+
+    ALL_FEATURES=($(jq -r --argjson ids "$(printf '%s\n' "${FEATURE_IDS[@]}" | jq -R . | jq -s .)" \
+        --argjson features "$(jq '.features' "$MANIFEST_FILE")" \
+        '$features | map(select(.id as $id | $ids | index($id))) | map("\(.ghcr):\(.defaultTag)") | .[]'))
+}
+
+# Create project
+create_project() {
+    if [[ $USE_MANIFEST -eq 1 ]]; then
+        mkdir -p "$DEST_DIR/.devcontainer"
+        DEVCONTAINER_JSON="$DEST_DIR/.devcontainer/devcontainer.json"
+        cat > "$DEVCONTAINER_JSON" <<EOF
+{
+  "name": "$PROJECT_NAME",
+  "image": "$TEMPLATE_GHCR:$TEMPLATE_TAG",
+  "features": $FEATURE_BLOCK
+}
+EOF
+    else
+        TEMPLATE_PATH="$TEMPLATE_ROOT/$TEMPLATE_NAME"
+
+        # Create project structure
+        mkdir -p "$DEST_DIR/.devcontainer"
+        cp -r "$TEMPLATE_PATH/.devcontainer/." "$DEST_DIR/.devcontainer/"
+        cp "$TEMPLATE_PATH/metadata.json" "$DEST_DIR/.devcontainer/" 2>/dev/null || true
+        cp "$TEMPLATE_PATH/README.md" "$DEST_DIR/" 2>/dev/null || true
+        mkdir -p "$DEST_DIR/src"
+
+        DEVCONTAINER_JSON="$DEST_DIR/.devcontainer/devcontainer.json"
+        if ! jq empty "$DEVCONTAINER_JSON" 2>/dev/null; then
+            echo "❌ ERROR: Invalid devcontainer.json in template. Aborting."
+            exit 1
+        fi
+
+        if [[ ${#ALL_FEATURES[@]} -gt 0 && -n "$GHCR_NAMESPACE" ]]; then
+            FEATURES_JSON=$(printf "%s\n" "${ALL_FEATURES[@]}" \
+                | sed "s|^|$GHCR_NAMESPACE/|" \
+                | jq -Rs 'split("\n")[:-1] | map({ (.): {} }) | add')
+            jq --argjson features "$FEATURES_JSON" '.features = $features' \
+                "$DEVCONTAINER_JSON" > "$DEVCONTAINER_JSON.tmp" && mv "$DEVCONTAINER_JSON.tmp" "$DEVCONTAINER_JSON"
+        fi
     fi
 
    # Inject base configuration
@@ -476,15 +557,42 @@ main() {
     # Check dependencies
     check_dependencies
 
-    # Validate configuration
-    validate_config
+    # Determine if a manifest should be used
+    if [[ -n "$MANIFEST_FILE" ]]; then
+        if [[ -f "$MANIFEST_FILE" ]]; then
+            USE_MANIFEST=1
+        else
+            if [[ $MANIFEST_SPECIFIED -eq 1 ]]; then
+                echo "❌ Manifest file '$MANIFEST_FILE' not found."
+                exit 1
+            fi
+            MANIFEST_FILE=""
+        fi
+    fi
+
+    if [[ -z "$MANIFEST_FILE" && -f "$DEFAULT_MANIFEST_FILE" ]]; then
+        MANIFEST_FILE="$DEFAULT_MANIFEST_FILE"
+        USE_MANIFEST=1
+    fi
+
+    # Validate configuration when using repository workflow
+    if [[ $USE_MANIFEST -eq 0 ]]; then
+        validate_config
+    fi
 
     # Main workflow
-    clone_devcontainer_repo
-    select_template
-    get_project_details
-    select_features
-    create_project
+    if [[ $USE_MANIFEST -eq 1 ]]; then
+        select_template_manifest
+        get_project_details
+        select_features_manifest
+        create_project
+    else
+        clone_devcontainer_repo
+        select_template
+        get_project_details
+        select_features
+        create_project
+    fi
 
     # Success message with dialog
     dialog --title "Success!" --msgbox "✅ Project created successfully!\n\nLocation: $DEST_DIR\n\nYou can now open this directory in VS Code with the Dev Containers extension." 10 60
