@@ -39,7 +39,7 @@ show_usage() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Dev Container Composer - Create new projects from dev container templates
+Dev Container Composer - Create new projects from dev container templates and features
 
 OPTIONS:
     -r, --repo URL          Dev container repository URL
