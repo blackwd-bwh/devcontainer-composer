@@ -1,0 +1,8 @@
+{
+  "features": [
+    {"id":"shared-dev-setup","ghcr":"ghcr.io/blackwd-bwh/shared-dev-setup","description":"shared-dev-setup feature","defaultTag":"latest"},{"id":"docker","ghcr":"ghcr.io/blackwd-bwh/docker","description":"docker feature","defaultTag":"latest"},{"id":"dotfiles-setup","ghcr":"ghcr.io/blackwd-bwh/dotfiles-setup","description":"dotfiles-setup feature","defaultTag":"latest"},{"id":"start-ssh-agent","ghcr":"ghcr.io/blackwd-bwh/start-ssh-agent","description":"start-ssh-agent feature","defaultTag":"latest"},{"id":"nodejs-22","ghcr":"ghcr.io/blackwd-bwh/nodejs-22","description":"nodejs-22 feature","defaultTag":"latest"},{"id":"cdk","ghcr":"ghcr.io/blackwd-bwh/cdk","description":"cdk feature","defaultTag":"latest"},{"id":"aws-cli","ghcr":"ghcr.io/blackwd-bwh/aws-cli","description":"aws-cli feature","defaultTag":"latest"}
+  ],
+  "templates": [
+    {"id":"python313","ghcr":"ghcr.io/blackwd-bwh/python313-base","description":"python313 template","defaultTag":"1.0.0"},{"id":"ubuntu","ghcr":"ghcr.io/blackwd-bwh/ubuntu-base","description":"ubuntu template","defaultTag":"1.0.0"},{"id":"ubuntu-rust","ghcr":"ghcr.io/blackwd-bwh/ubuntu-rust-base","description":"ubuntu-rust template","defaultTag":"latest"}
+  ]
+}
