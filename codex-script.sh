@@ -333,9 +333,9 @@ write_devcontainer() {
 select_base_image
 gather_all_features
 select_features
-resolve_all_dependencies
 for feat in "${SELECTED_FEATURES[@]}"; do
   configure_feature "$feat"
 done
+resolve_all_dependencies
 get_project_destination
 write_devcontainer
