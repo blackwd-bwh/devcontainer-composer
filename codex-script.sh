@@ -229,6 +229,15 @@ write_devcontainer() {
     }' > "$DEST_DIR/.devcontainer/devcontainer.json"
 
   echo "✅ .devcontainer/devcontainer.json created at $DEST_DIR/.devcontainer/devcontainer.json"
+
+  if command -v git >/dev/null && [[ ! -d "$DEST_DIR/.git" ]]; then
+    (
+      cd "$DEST_DIR"
+      git init -b main
+      git add .
+      git commit -m "Initial commit"
+    )
+  fi
 }
 
 # --- Main Execution ---
