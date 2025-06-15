@@ -336,46 +336,79 @@ select_features() {
 
     declare -A RESOLVED=()
     declare -A USER_MAP=()
+
+    # Track features the user explicitly selected
     for f in "${USER_SELECTED[@]}"; do
-        RESOLVED["$f"]=1
         USER_MAP["$f"]=1
     done
 
-    # Recursive dependency resolver
+    # ---------------------------------------------------------
+    # Fetch a remote devcontainer-feature.json from GitHub
+    # ---------------------------------------------------------
+    fetch_remote_feature_json() {
+        local image="$1"     # e.g. ghcr.io/user/feature[:tag]
+        local owner feature
+
+        owner="$(echo "$image" | cut -d/ -f2)"
+        feature="$(echo "$image" | cut -d/ -f3 | cut -d: -f1)"
+        curl -fsSL "https://raw.githubusercontent.com/$owner/features/main/src/$feature/devcontainer-feature.json" 2>/dev/null || true
+    }
+
+    # ---------------------------------------------------------
+    # Recursively resolve dependencies for a feature. Handles
+    # both local repo features and ghcr.io remote features.
+    # ---------------------------------------------------------
     resolve_dependencies() {
-        local base="$1"
-        local feature="$2"
-        local path="$base/$feature/devcontainer-feature.json"
+        local feature="$1"
+        local deps path json
 
-        if [[ ! -f "$path" ]]; then return; fi
+        # Skip if already processed to avoid infinite loops
+        [[ -n "${RESOLVED[$feature]+_}" ]] && return
+        RESOLVED["$feature"]=1
 
-        local deps
-        deps=$(jq -r '.dependsOn | keys[]?' "$path" 2>/dev/null || true)
+        if [[ "$feature" == ghcr.io/* ]]; then
+            # Remote feature: download its metadata
+            json="$(fetch_remote_feature_json "$feature")"
+            deps=$(echo "$json" | jq -r '.dependsOn | keys[]?' 2>/dev/null || true)
+        else
+            # Local feature in the repo
+            path="$FEATURES_ROOT/$feature/devcontainer-feature.json"
+            [[ -f "$path" ]] || return
+            deps=$(jq -r '.dependsOn | keys[]?' "$path" 2>/dev/null || true)
+        fi
+
+        # Walk each dependency entry
         for dep in $deps; do
-            local dep_name="${dep#./features/}"
-            if [[ -z "${RESOLVED[$dep_name]+_}" ]]; then
-                RESOLVED["$dep_name"]=1
-                resolve_dependencies "$base" "$dep_name"
-            fi
+            dep="${dep#./features/}"
+            resolve_dependencies "$dep"
         done
     }
 
+    # Resolve dependencies for each user-selected feature
     for feat in "${USER_SELECTED[@]}"; do
-        resolve_dependencies "$FEATURES_ROOT" "$feat"
+        resolve_dependencies "$feat"
     done
 
-    ALL_FEATURES=($(for f in "${!RESOLVED[@]}"; do
-      if [[ "$f" == ghcr.io/* ]]; then
-        echo "$f"
-      else
-        echo "$GHCR_NAMESPACE/$f:latest"
-      fi
-    done | sort))
+    # Build final list of features using ghcr paths for remote features
+    ALL_FEATURES=()
+    for f in "${!RESOLVED[@]}"; do
+        if [[ "$f" == ghcr.io/* ]]; then
+            ALL_FEATURES+=("$f")
+        else
+            ALL_FEATURES+=("$GHCR_NAMESPACE/$f:latest")
+        fi
+    done
+    IFS=$'\n' ALL_FEATURES=($(sort <<<"${ALL_FEATURES[*]}"))
 
+    # Determine which features were added implicitly via dependencies
     IMPLICIT_ADDITIONS=()
-    for f in "${ALL_FEATURES[@]}"; do
+    for f in "${!RESOLVED[@]}"; do
         if [[ -z "${USER_MAP[$f]+_}" ]]; then
-            IMPLICIT_ADDITIONS+=("$f")
+            if [[ "$f" == ghcr.io/* ]]; then
+                IMPLICIT_ADDITIONS+=("$f")
+            else
+                IMPLICIT_ADDITIONS+=("$GHCR_NAMESPACE/$f:latest")
+            fi
         fi
     done
 
@@ -408,16 +441,9 @@ create_project() {
     fi
 
     # Add features if any were selected
-    if [[ ${#ALL_FEATURES[@]} -gt 0 && -n "$GHCR_NAMESPACE" ]]; then
+    if [[ ${#ALL_FEATURES[@]} -gt 0 ]]; then
         FEATURES_JSON=$(printf "%s\n" "${ALL_FEATURES[@]}" \
-            | while read -r f; do
-                if [[ "$f" == ghcr.io/* ]]; then
-                    echo "$f"
-                else
-                echo "$GHCR_NAMESPACE/$f:latest"
-                fi
-            done \
-           | jq -Rs 'split("\n")[:-1] | map({ (.): {} }) | add')
+            | jq -Rs 'split("\n")[:-1] | map({ (.): {} }) | add')
         jq --argjson features "$FEATURES_JSON" '.features = $features' \
             "$DEVCONTAINER_JSON" > "$DEVCONTAINER_JSON.tmp" && mv "$DEVCONTAINER_JSON.tmp" "$DEVCONTAINER_JSON"
     fi
