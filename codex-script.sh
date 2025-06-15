@@ -13,6 +13,32 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# ---Script Dependency Check ---
+check_dependencies() {
+  local missing=()
+  command -v dialog >/dev/null || missing+=("dialog")
+  command -v jq >/dev/null || missing+=("jq")
+  command -v git >/dev/null || missing+=("git")
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    if dialog --yesno "Missing required dependencies:\n${missing[*]}\n\nAttempt to install them now?" 10 60; then
+      if command -v apt-get >/dev/null; then
+        sudo apt-get update && sudo apt-get install -y "${missing[@]}"
+      elif command -v yum >/dev/null; then
+        sudo yum install -y "${missing[@]}"
+      elif command -v brew >/dev/null; then
+        brew install "${missing[@]}"
+      else
+        dialog --msgbox "Automatic installation not supported on this system." 8 60
+        exit 1
+      fi
+    else
+      dialog --msgbox "We can't proceed without these dependencies :(" 6 60
+      exit 1
+    fi
+  fi
+}
+
 # --- Base image selection (from select-base-image.sh) ---
 select_base_image() {
   dialog --title "Select Base Image" --menu "Choose a base image:" 12 50 3 \
@@ -229,9 +255,19 @@ write_devcontainer() {
     }' > "$DEST_DIR/.devcontainer/devcontainer.json"
 
   echo "✅ .devcontainer/devcontainer.json created at $DEST_DIR/.devcontainer/devcontainer.json"
+
+  if command -v git >/dev/null && [[ ! -d "$DEST_DIR/.git" ]]; then
+    (
+      cd "$DEST_DIR"
+      git init -b main
+      git add .
+      git commit -m "Initial commit"
+    )
+  fi
 }
 
 # --- Main Execution ---
+check_dependencies
 select_base_image
 gather_all_features
 select_features
