@@ -122,6 +122,92 @@ select_features() {
   read -ra SELECTED_FEATURES <<< "$(tr -d '"' < "$WORKDIR/selected")"
 }
 
+## ---------------------------------------------------------------------------
+## Dependency Resolution Helpers (ported from devcontainer-compose.sh)
+## ---------------------------------------------------------------------------
+
+# Fetch devcontainer-feature.json from GitHub for a ghcr.io feature reference
+fetch_remote_feature_json() {
+  local ref="$1"                           # ghcr.io/<owner>/features/<id>:<tag>
+  local owner feature
+  owner="$(echo "$ref" | cut -d/ -f2)"
+  feature="$(echo "$ref" | cut -d/ -f4 | cut -d: -f1)"
+  curl -fsSL "https://raw.githubusercontent.com/$owner/features/main/src/$feature/devcontainer-feature.json" 2>/dev/null || true
+}
+
+# Recursively resolve dependsOn entries for a feature reference
+resolve_dependencies() {
+  local ref="$1"                   # fully qualified ghcr feature reference
+
+  # Avoid infinite recursion if already processed
+  [[ -n "${RESOLVED[$ref]+_}" ]] && return
+  RESOLVED["$ref"]=1
+
+  local owner feature key json deps path
+  owner="$(echo "$ref" | cut -d/ -f2)"
+  feature="$(echo "$ref" | cut -d/ -f4 | cut -d: -f1)"
+  key="$owner:$feature"
+
+  # Prefer local clone if available, else fetch from GitHub
+  if [[ -n "${FEATURE_PATHS[$key]+_}" ]]; then
+    path="${FEATURE_PATHS[$key]}/devcontainer-feature.json"
+    json="$(cat "$path")"
+  else
+    json="$(fetch_remote_feature_json "$ref")"
+  fi
+
+  # Grab dependency keys, if any
+  deps=$(echo "$json" | jq -r '.dependsOn | keys[]?' 2>/dev/null || true)
+  for dep in $deps; do
+    # Strip local relative prefixes
+    dep="${dep#./features/}"
+    dep="${dep#./}"
+
+    # Expand to ghcr reference if not already
+    if [[ "$dep" != ghcr.io/* ]]; then
+      dep="ghcr.io/$owner/features/$dep:latest"
+    fi
+    [[ "$dep" != *:* ]] && dep+=":latest"
+
+    resolve_dependencies "$dep"
+  done
+}
+
+resolve_all_dependencies() {
+  declare -gA RESOLVED=()
+  declare -gA USER_MAP=()
+
+  # Map user selections for later comparison
+  for key in "${SELECTED_FEATURES[@]}"; do
+    USER_MAP["$key"]=1
+    origin="${FEATURE_ORIGINS[$key]}"
+    id="${key#*:}"
+    version="${FEATURE_VERSIONS[$key]}"
+    resolve_dependencies "ghcr.io/$origin/features/$id:$version"
+  done
+
+  # Build final list of feature refs
+  ALL_FEATURE_REFS=($(printf "%s\n" "${!RESOLVED[@]}" | sort))
+
+  # Compute which refs were added implicitly
+  IMPLICIT_ADDITIONS=()
+  for ref in "${ALL_FEATURE_REFS[@]}"; do
+    owner="$(echo "$ref" | cut -d/ -f2)"
+    feature="$(echo "$ref" | cut -d/ -f4 | cut -d: -f1)"
+    key="$owner:$feature"
+    [[ -z "${USER_MAP[$key]+_}" ]] && IMPLICIT_ADDITIONS+=("$ref")
+  done
+
+  # Inform the user if we added dependencies automatically
+  if [[ ${#IMPLICIT_ADDITIONS[@]} -gt 0 ]]; then
+    local msg="The following dependent features were automatically added:\n\n"
+    for f in "${IMPLICIT_ADDITIONS[@]}"; do
+      msg+="• $f\n"
+    done
+    dialog --title "Dependencies Added" --msgbox "$msg" 15 60
+  fi
+}
+
 configure_feature() {
   local key="$1"
   local path="${FEATURE_PATHS[$key]}"
@@ -211,13 +297,16 @@ write_devcontainer() {
   mkdir -p "$DEST_DIR/.devcontainer"
   local features_obj="{}"
 
-  for key in "${SELECTED_FEATURES[@]}"; do
-    origin="${FEATURE_ORIGINS[$key]}"
-    id="${key#*:}"
-    version="${FEATURE_VERSIONS[$key]}"
-    feature_ref="ghcr.io/$origin/features/$id:$version"
-    opts="${FEATURE_OPTS[$key]}"
-    features_obj=$(echo "$features_obj" | jq --arg ref "$feature_ref" --argjson opt "$opts" '. + {($ref): $opt}')
+  for ref in "${ALL_FEATURE_REFS[@]}"; do
+    owner="$(echo "$ref" | cut -d/ -f2)"
+    feature="$(echo "$ref" | cut -d/ -f4 | cut -d: -f1)"
+    key="$owner:$feature"
+    if [[ -n "${FEATURE_OPTS[$key]+_}" ]]; then
+      opts="${FEATURE_OPTS[$key]}"
+    else
+      opts="{}"
+    fi
+    features_obj=$(echo "$features_obj" | jq --arg ref "$ref" --argjson opt "$opts" '. + {($ref): $opt}')
   done
 
   jq -n \
@@ -244,6 +333,7 @@ write_devcontainer() {
 select_base_image
 gather_all_features
 select_features
+resolve_all_dependencies
 for feat in "${SELECTED_FEATURES[@]}"; do
   configure_feature "$feat"
 done
