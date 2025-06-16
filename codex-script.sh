@@ -163,7 +163,7 @@ gather_all_features() {
         key="$account:$feature_id"
         FEATURE_PATHS["$key"]="$feature_path"
         FEATURE_ORIGINS["$key"]="$account"
-        ALL_MENU_ITEMS+=("$key" "$(printf '%-20s %s' "$desc")" "off")
+        ALL_MENU_ITEMS+=("$key" "$(printf '%-20s' "$desc")" "off")
       fi
     done
   done
