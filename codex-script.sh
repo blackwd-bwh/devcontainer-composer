@@ -133,8 +133,47 @@ select_base_image() {
 }
 
 # --- Feature discovery and configuration ---
-GITHUB_ACCOUNTS=("devcontainers" "blackwd-bwh")
-BRANCH="main"
+# Defaults for GitHub feature sources
+FEATURE_ACCOUNTS=("devcontainers" "blackwd-bwh")
+FEATURE_BRANCH="main"
+
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -a, --accounts LIST  Comma-separated GitHub accounts to search \
+                       (default: ${FEATURE_ACCOUNTS[*]})
+  -b, --branch BRANCH  Branch to clone from feature repos \
+                       (default: $FEATURE_BRANCH)
+  -h, --help           Show this help and exit
+EOF
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -a|--accounts)
+        IFS=',' read -ra FEATURE_ACCOUNTS <<< "$2"
+        shift 2
+        ;;
+      -b|--branch)
+        FEATURE_BRANCH="$2"
+        shift 2
+        ;;
+      -h|--help)
+        show_help
+        exit 0
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        show_help
+        exit 1
+        ;;
+    esac
+  done
+}
+
 declare -A FEATURE_PATHS
 declare -A FEATURE_ORIGINS
 declare -A FEATURE_OPTS
@@ -144,8 +183,8 @@ clone_repo() {
   local account="$1"
   local repo="https://github.com/$account/features.git"
   local target_dir="$WORKDIR/$account"
-  echo "Cloning $repo..." >&2
-  if git clone --quiet --depth 1 --branch "$BRANCH" "$repo" "$target_dir"; then
+  echo "Cloning $repo (branch: $FEATURE_BRANCH)..." >&2
+  if git clone --quiet --depth 1 --branch "$FEATURE_BRANCH" "$repo" "$target_dir"; then
     echo "Cloned $account/features" >&2
     echo "$target_dir/src"
   else
@@ -156,7 +195,7 @@ clone_repo() {
 
 gather_all_features() {
   ALL_MENU_ITEMS=()
-  for account in "${GITHUB_ACCOUNTS[@]}"; do
+  for account in "${FEATURE_ACCOUNTS[@]}"; do
     src_path=$(clone_repo "$account") || continue
     for feature_path in "$src_path"/*; do
       if [[ -f "$feature_path/devcontainer-feature.json" ]]; then
@@ -391,6 +430,7 @@ write_devcontainer() {
 }
 
 # --- Main Execution ---
+parse_args "$@"
 check_dependencies
 select_base_image
 gather_all_features

@@ -7,9 +7,47 @@ set -euo pipefail
 # Discovers all features under `src/`, prompts for options, and outputs config
 # ===============================================
 
-# Hardcoded GitHub accounts to search from
-GITHUB_ACCOUNTS=("devcontainers" "blackwd-bwh")
-BRANCH="main"
+# Default GitHub accounts and branch for feature repos
+FEATURE_ACCOUNTS=("devcontainers" "blackwd-bwh")
+FEATURE_BRANCH="main"
+
+# Display usage information
+show_help() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -a, --accounts LIST  Comma-separated GitHub accounts to search \
+                       (default: ${FEATURE_ACCOUNTS[*]})
+  -b, --branch BRANCH  Branch to clone from feature repos \
+                       (default: $FEATURE_BRANCH)
+  -h, --help           Show this help and exit
+EOF
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -a|--accounts)
+                IFS=',' read -ra FEATURE_ACCOUNTS <<< "$2"
+                shift 2
+                ;;
+            -b|--branch)
+                FEATURE_BRANCH="$2"
+                shift 2
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            *)
+                echo "Unknown option: $1" >&2
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+}
 
 # Temporary working space
 WORKDIR=$(mktemp -d)
@@ -29,8 +67,8 @@ clone_repo() {
     local repo="https://github.com/$account/features.git"
     local target_dir="$WORKDIR/$account"
 
-    echo "📥 Cloning $repo..." >&2
-    if git clone --quiet --depth 1 --branch "$BRANCH" "$repo" "$target_dir"; then
+    echo "📥 Cloning $repo (branch: $FEATURE_BRANCH)..." >&2
+    if git clone --quiet --depth 1 --branch "$FEATURE_BRANCH" "$repo" "$target_dir"; then
         echo "✅ Cloned $account/features" >&2
         echo "$target_dir/src"
     else
@@ -43,7 +81,7 @@ clone_repo() {
 # Discover all features in all accounts
 # -----------------------------------------------
 gather_all_features() {
-    for account in "${GITHUB_ACCOUNTS[@]}"; do
+    for account in "${FEATURE_ACCOUNTS[@]}"; do
         src_path=$(clone_repo "$account") || continue
         for feature_path in "$src_path"/*; do
             if [[ -f "$feature_path/devcontainer-feature.json" ]]; then
@@ -133,6 +171,7 @@ print_results() {
 
 # ========== MAIN EXECUTION ==========
 
+parse_args "$@"
 ALL_MENU_ITEMS=()
 gather_all_features
 select_features
