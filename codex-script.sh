@@ -264,8 +264,10 @@ resolve_all_dependencies() {
 configure_feature() {
   local key="$1"
   local path="${FEATURE_PATHS[$key]}"
-  local version=$(jq -r '.version // "latest"' "$path/devcontainer-feature.json")
-  local options_json=$(jq -c '.options // {}' "$path/devcontainer-feature.json")
+  local version
+  version=$(jq -r '.version // "latest"' "$path/devcontainer-feature.json")
+  local options_json
+  options_json=$(jq -c '.options // {}' "$path/devcontainer-feature.json")
   declare -A selected_opts
 
   if [[ "$options_json" != "{}" ]]; then

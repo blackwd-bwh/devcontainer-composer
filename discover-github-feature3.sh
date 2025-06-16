@@ -73,10 +73,13 @@ select_features() {
 configure_feature() {
     local key="$1"
     local path="${FEATURE_PATHS[$key]}"
-    local id="$(basename "$path")"
+    local id
+    id="$(basename "$path")"
     local origin="${FEATURE_ORIGINS[$key]}"
-    local version=$(jq -r '.version // "latest"' "$path/devcontainer-feature.json")
-    local options_json=$(jq -c '.options' "$path/devcontainer-feature.json")
+    local version
+    version=$(jq -r '.version // "latest"' "$path/devcontainer-feature.json")
+    local options_json
+    options_json=$(jq -c '.options' "$path/devcontainer-feature.json")
     local -A selected_opts
 
     echo "⚙️ Configuring: $key"
