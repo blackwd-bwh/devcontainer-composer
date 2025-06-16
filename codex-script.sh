@@ -130,7 +130,7 @@ select_base_image() {
   fi
 }
 
-# --- Feature discovery and configuration (from discover-github-feature3.sh) ---
+# --- Feature discovery and configuration ---
 GITHUB_ACCOUNTS=("devcontainers" "blackwd-bwh")
 BRANCH="main"
 declare -A FEATURE_PATHS
@@ -142,9 +142,9 @@ clone_repo() {
   local account="$1"
   local repo="https://github.com/$account/features.git"
   local target_dir="$WORKDIR/$account"
-  echo "📥 Cloning $repo..." >&2
+  echo "Cloning $repo..." >&2
   if git clone --quiet --depth 1 --branch "$BRANCH" "$repo" "$target_dir"; then
-    echo "✅ Cloned $account/features" >&2
+    echo "Cloned $account/features" >&2
     echo "$target_dir/src"
   else
     echo "❌ Failed to clone $repo" >&2
@@ -176,7 +176,7 @@ select_features() {
 }
 
 ## ---------------------------------------------------------------------------
-## Dependency Resolution Helpers (ported from devcontainer-compose.sh)
+## Dependency Resolution Helpers
 ## ---------------------------------------------------------------------------
 
 # Fetch devcontainer-feature.json from GitHub for a ghcr.io feature reference
@@ -291,11 +291,11 @@ configure_feature() {
         elif [[ $? -eq 1 ]]; then
           selected_opts["$opt"]="false"
         else
-          echo "❌ Cancelled."
+          echo "Cancelled."
           exit 1
         fi
       else
-        echo "⚠️  Skipping unsupported option type: $type"
+        echo "Skipping unsupported option type: $type"
       fi
     done
   fi
