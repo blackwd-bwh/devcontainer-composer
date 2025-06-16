@@ -19,6 +19,7 @@ check_dependencies() {
   command -v dialog >/dev/null || missing+=("dialog")
   command -v jq >/dev/null || missing+=("jq")
   command -v git >/dev/null || missing+=("git")
+  command -v curl >/dev/null || missing+=("curl")
 
   if [[ ${#missing[@]} -gt 0 ]]; then
     if dialog --yesno "Missing required dependencies:\n${missing[*]}\n\nAttempt to install them now?" 10 60; then
