@@ -66,20 +66,6 @@ The new project is also initialized as a Git repository with the first commit.
 }
 ```
 
----
-
-## Screenshots
-
-Screenshots of the dialog interface are located in the `assets/` folder:
-
-- `composer1.png` – base image selection
-- `composer2.png` – feature checklist
-- `composer3.png` – project location prompt
-
-They give a sense of the flow if you haven’t run the script yet.
-
----
-
 ## License
 
 This project is licensed under the MIT License.
