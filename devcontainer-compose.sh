@@ -1,529 +1,403 @@
 #!/bin/bash
-set -euo pipefail # e: exit on error, u: unset variables are error, -o pipefail: fail the pipeline if any part fails
+set -euo pipefail
 
-# =============================================================================
-# Dev Container Composer (Dialog Version)
-# =============================================================================
+# ===============================================================
+# Compose a devcontainer.json using a base image and GitHub features
+# ===============================================================
 
-# Default configuration - can be overridden by config file or environment variables
-DEFAULT_CONFIG_FILE="$HOME/.devcontainer-composer.conf"
-DEFAULT_DEVCONTAINER_REPO=""
-DEFAULT_GHCR_NAMESPACE=""
-DEFAULT_PROJECT_PARENT="$HOME/code"
-DEFAULT_TEMPLATE_BRANCH="main"
-DEFAULT_TEMPLATE_SUBDIR="src"
-DEFAULT_FEATURES_SUBDIR="features"
-
-# Dialog temporary file for responses
 DIALOG_TEMP=$(mktemp)
-trap 'rm -f "$DIALOG_TEMP"' EXIT
-
-# Load configuration
-load_config() {
-    # Load from config file if it exists
-    if [[ -f "$DEFAULT_CONFIG_FILE" ]]; then
-        source "$DEFAULT_CONFIG_FILE"
-    fi
-
-    # Environment variables override config file
-    DEVCONTAINER_REPO="${DEVCONTAINER_REPO:-${DEFAULT_DEVCONTAINER_REPO}}"
-    GHCR_NAMESPACE="${GHCR_NAMESPACE:-${DEFAULT_GHCR_NAMESPACE}}"
-    PROJECT_PARENT="${PROJECT_PARENT:-${DEFAULT_PROJECT_PARENT}}"
-    TEMPLATE_BRANCH="${TEMPLATE_BRANCH:-${DEFAULT_TEMPLATE_BRANCH}}"
-    TEMPLATE_SUBDIR="${TEMPLATE_SUBDIR:-${DEFAULT_TEMPLATE_SUBDIR}}"
-    FEATURES_SUBDIR="${FEATURES_SUBDIR:-${DEFAULT_FEATURES_SUBDIR}}"
-}
-
-# Show usage information
-show_usage() {
-    cat << EOF
-Usage: $(basename "$0") [OPTIONS]
-
-Dev Container Composer - Create new projects from dev container templates and features
-
-OPTIONS:
-    -r, --repo URL          Dev container repository URL
-    -n, --namespace NAME    GHCR namespace for features
-    -p, --parent DIR        Parent directory for projects (default: $DEFAULT_PROJECT_PARENT)
-    -b, --branch BRANCH     Template repository branch (default: $DEFAULT_TEMPLATE_BRANCH)
-    -c, --config FILE       Configuration file (default: $DEFAULT_CONFIG_FILE)
-    -h, --help              Show this help message
-    --setup                 Run initial setup wizard
-
-CONFIGURATION:
-    Configuration can be set via:
-    1. Configuration file: $DEFAULT_CONFIG_FILE
-    2. Environment variables
-    3. Command line options (highest priority)
-
-    Example config file:
-        DEVCONTAINER_REPO="git@github.com:user/dev-containers.git"
-        GHCR_NAMESPACE="ghcr.io/user"
-        PROJECT_PARENT="$HOME/projects"
-        TEMPLATE_BRANCH="main"
-        TEMPLATE_SUBDIR="templates"
-        FEATURES_SUBDIR="features"
-
-EOF
-}
-
-# Setup wizard for first-time users
-setup_wizard() {
-    dialog --title "Dev Container Composer Setup" --msgbox "Welcome to Dev Container Composer Setup\n\nThis wizard will help you configure the tool for first-time use." 10 60
-
-    # Get repository URL
-    if ! dialog --title "Repository Setup" --inputbox "Enter your dev container repository URL (SSH or HTTPS):" 10 70 2>"$DIALOG_TEMP"; then
-        echo "Setup cancelled."
-        exit 1
-    fi
-    REPO_URL=$(cat "$DIALOG_TEMP")
-    [[ -z "$REPO_URL" ]] && echo "Setup cancelled - no repository URL provided." && exit 1
-
-    # Get GHCR namespace
-    if ! dialog --title "Feature Registry" --inputbox "Enter your GHCR namespace for features:\n(e.g., ghcr.io/username)" 10 70 2>"$DIALOG_TEMP"; then
-        echo "Setup cancelled."
-        exit 1
-    fi
-    NAMESPACE=$(cat "$DIALOG_TEMP")
-    [[ -z "$NAMESPACE" ]] && echo "Setup cancelled - no namespace provided." && exit 1
-
-    # Get default project parent
-    if ! dialog --title "Project Location" --inputbox "Enter default parent directory for projects:" 10 70 "$DEFAULT_PROJECT_PARENT" 2>"$DIALOG_TEMP"; then
-        echo "Setup cancelled."
-        exit 1
-    fi
-    PARENT=$(cat "$DIALOG_TEMP")
-    [[ -z "$PARENT" ]] && echo "Setup cancelled - no parent directory provided." && exit 1
-
-    # Optional: Advanced settings
-    if dialog --title "Advanced Settings" --yesno "Would you like to configure advanced settings?\n(branch, subdirectories)\n\nSelect 'No' to use defaults." 10 60; then
-
-        dialog --title "Repository Branch" --inputbox "Template repository branch:" 8 50 "$DEFAULT_TEMPLATE_BRANCH" 2>"$DIALOG_TEMP" || true
-        BRANCH=$(cat "$DIALOG_TEMP")
-        BRANCH="${BRANCH:-$DEFAULT_TEMPLATE_BRANCH}"
-
-        dialog --title "Templates Directory" --inputbox "Subdirectory containing templates:" 8 50 "$DEFAULT_TEMPLATE_SUBDIR" 2>"$DIALOG_TEMP" || true
-        TEMPLATE_DIR=$(cat "$DIALOG_TEMP")
-        TEMPLATE_DIR="${TEMPLATE_DIR:-$DEFAULT_TEMPLATE_SUBDIR}"
-
-        dialog --title "Features Directory" --inputbox "Subdirectory containing features:" 8 50 "$DEFAULT_FEATURES_SUBDIR" 2>"$DIALOG_TEMP" || true
-        FEATURES_DIR=$(cat "$DIALOG_TEMP")
-        FEATURES_DIR="${FEATURES_DIR:-$DEFAULT_FEATURES_SUBDIR}"
-    else
-        BRANCH="$DEFAULT_TEMPLATE_BRANCH"
-        TEMPLATE_DIR="$DEFAULT_TEMPLATE_SUBDIR"
-        FEATURES_DIR="$DEFAULT_FEATURES_SUBDIR"
-    fi
-
-    # Write configuration
-    cat > "$DEFAULT_CONFIG_FILE" << EOF
-# Dev Container Composer Configuration
-DEVCONTAINER_REPO="$REPO_URL"
-GHCR_NAMESPACE="$NAMESPACE"
-PROJECT_PARENT="$PARENT"
-TEMPLATE_BRANCH="$BRANCH"
-TEMPLATE_SUBDIR="$TEMPLATE_DIR"
-FEATURES_SUBDIR="$FEATURES_DIR"
-EOF
-
-    dialog --title "Setup Complete" --msgbox "✅ Configuration saved to $DEFAULT_CONFIG_FILE\n\nYou can now run the composer without --setup" 8 60
-    exit 0
-}
-
-# Check dependencies
-check_dependencies() {
-    local missing=()
-
-    command -v dialog >/dev/null || missing+=("dialog")
-    command -v jq >/dev/null || missing+=("jq")
-    command -v git >/dev/null || missing+=("git")
-
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        echo "❌ Missing required dependencies: ${missing[*]}"
-        echo "Please install them and try again."
-        echo
-        echo "On Ubuntu/Debian: sudo apt install dialog jq git"
-        echo "On macOS: brew install dialog jq git"
-        echo "On RHEL/CentOS: sudo yum install dialog jq git"
-        exit 1
-    fi
-}
-
-# Validate configuration
-validate_config() {
-    if [[ -z "$DEVCONTAINER_REPO" ]]; then
-        echo "❌ No dev container repository configured."
-        echo "Run: $(basename "$0") --setup"
-        exit 1
-    fi
-
-    if [[ -z "$GHCR_NAMESPACE" ]]; then
-        echo "❌ No GHCR namespace configured."
-        echo "Run: $(basename "$0") --setup"
-        exit 1
-    fi
-}
-
-# Parse command line arguments
-parse_args() {
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            -r|--repo)
-                DEVCONTAINER_REPO="$2"
-                shift 2
-                ;;
-            -n|--namespace)
-                GHCR_NAMESPACE="$2"
-                shift 2
-                ;;
-            -p|--parent)
-                PROJECT_PARENT="$2"
-                shift 2
-                ;;
-            -b|--branch)
-                TEMPLATE_BRANCH="$2"
-                shift 2
-                ;;
-            -c|--config)
-                DEFAULT_CONFIG_FILE="$2"
-                shift 2
-                ;;
-            --setup)
-                setup_wizard
-                ;;
-            -h|--help)
-                show_usage
-                exit 0
-                ;;
-            *)
-                echo "Unknown option: $1"
-                show_usage
-                exit 1
-                ;;
-        esac
-    done
-}
-
-# Clone dev container repository
-clone_devcontainer_repo() {
-    DEVCONTAINER_LOCAL="$(mktemp -d)"
-    TEMPLATE_ROOT="$DEVCONTAINER_LOCAL/$TEMPLATE_SUBDIR"
-    FEATURES_ROOT="$DEVCONTAINER_LOCAL/$FEATURES_SUBDIR"
-
-    echo "🔄 Cloning dev-container repo into temp directory..."
-    if ! git clone --depth 1 --branch "$TEMPLATE_BRANCH" "$DEVCONTAINER_REPO" "$DEVCONTAINER_LOCAL"; then
-        echo "❌ Failed to clone repository. Check your repository URL and credentials."
-        exit 1
-    fi
-
-    if [[ ! -d "$TEMPLATE_ROOT" ]]; then
-        echo "❌ Templates directory '$TEMPLATE_SUBDIR' not found in repository"
-        exit 1
-    fi
-}
-
-# Select template (dev container repository must be cloned first)
-select_template() {
-    TEMPLATE_DIRS=$(find "$TEMPLATE_ROOT" -maxdepth 1 -mindepth 1 -type d | xargs -n1 basename)
-    
-    if [[ -z "$TEMPLATE_DIRS" ]]; then
-        dialog --title "Error" --msgbox "❌ No templates found in $TEMPLATE_ROOT" 8 60
-        exit 1
-    fi
-
-    # Build menu options for dialog
-    local menu_items=()
-    for dir in $TEMPLATE_DIRS; do
-        META_FILE="$TEMPLATE_ROOT/$dir/metadata.json"
-        if [[ -f "$META_FILE" ]]; then
-            DESC=$(jq -r '.description // "No description"' "$META_FILE" 2>/dev/null || echo "No description")
-        else
-            DESC="Template: $dir"
-        fi
-        menu_items+=("$dir" "$DESC")
-    done
-
-    if ! dialog --title "Choose Dev Container Template" \
-        --menu "Select a base template:" 20 78 10 "${menu_items[@]}" 2>"$DIALOG_TEMP"; then
-        echo "Template selection cancelled."
-        exit 1
-    fi
-    
-    TEMPLATE_NAME=$(cat "$DIALOG_TEMP")
-    if [[ -z "$TEMPLATE_NAME" ]]; then
-        echo "❌ No template selected"
-        exit 1
-    fi
-}
-
-# Get project details
-get_project_details() {
-    # Project parent directory
-    if ! dialog --title "Select Project Location" --inputbox \
-        "Enter the parent directory where the new project should go:" 10 60 "$PROJECT_PARENT" 2>"$DIALOG_TEMP"; then
-        echo "Project setup cancelled."
-        exit 1
-    fi
-    PARENT_DIR=$(cat "$DIALOG_TEMP")
-    [[ -z "$PARENT_DIR" ]] && echo "Cancelled - no parent directory provided." && exit 1
-    PARENT_DIR="${PARENT_DIR%/}"
-
-    # Project name
-    if ! dialog --title "Project Name" --inputbox "Enter your new project name:" 8 50 2>"$DIALOG_TEMP"; then
-        echo "Project setup cancelled."
-        exit 1
-    fi
-    PROJECT_NAME=$(cat "$DIALOG_TEMP")
-    [[ -z "$PROJECT_NAME" ]] && echo "Cancelled - no project name provided." && exit 1
-
-    DEST_DIR="$PARENT_DIR/$PROJECT_NAME"
-
-    # Confirm details
-    if ! dialog --title "Confirm Project Details" --yesno \
-"Project Name: $PROJECT_NAME
-Template: $TEMPLATE_NAME
-Destination: $DEST_DIR
-
-Continue with project creation?" 12 60; then
-        echo "Project creation cancelled by user."
-        exit 1
-    fi
-
-    # Validate destination
-    if [[ -d "$DEST_DIR" ]]; then
-        dialog --title "Error" --msgbox "❌ Project directory already exists:\n$DEST_DIR\n\nPlease choose a different name or location." 10 60
-        exit 1
-    fi
-}
-
-# Select features (only if features directory exists)
-select_features() {
-    ALL_FEATURES=()
-
-    if [[ ! -d "$FEATURES_ROOT" ]]; then
-        echo "No features directory found, skipping feature selection"
-        return
-    fi
-
-    FEATURE_DIRS=$(find "$FEATURES_ROOT" -mindepth 1 -maxdepth 1 -type d | xargs -n1 basename 2>/dev/null || true)
-
-    if [[ -z "$FEATURE_DIRS" ]]; then
-        echo "No features found, skipping feature selection"
-        return
-    fi
-
-    # Build checklist options for dialog
-    local checklist_items=()
-    for feat in $FEATURE_DIRS; do
-        DESC=$(jq -r '.description // .id // "Feature"' "$FEATURES_ROOT/$feat/devcontainer-feature.json" 2>/dev/null || echo "Feature: $feat")
-        checklist_items+=("$feat" "$DESC" "off")
-    done
-
-    if ! dialog --title "Choose Features" --checklist \
-        "Select which features to include:\n(Use SPACE to select, ENTER to confirm)" 20 70 10 "${checklist_items[@]}" 2>"$DIALOG_TEMP"; then
-        echo "Feature selection cancelled."
-        exit 1
-    fi
-
-    # Process feature selection and dependencies
-    FEATURE_CHOICES_RAW=$(cat "$DIALOG_TEMP")
-    read -ra USER_SELECTED <<< "$(echo "$FEATURE_CHOICES_RAW" | tr -d '"')"
-    
-    if [[ ${#USER_SELECTED[@]} -eq 0 ]]; then
-        echo "No features selected"
-        return
-    fi
-
-    declare -A RESOLVED=()
-    declare -A USER_MAP=()
-
-    # Track features the user explicitly selected
-    for f in "${USER_SELECTED[@]}"; do
-        USER_MAP["$f"]=1
-    done
-
-    # ---------------------------------------------------------
-    # Fetch a remote devcontainer-feature.json from GitHub
-    # ---------------------------------------------------------
-    fetch_remote_feature_json() {
-        local image="$1"     # e.g. ghcr.io/user/feature[:tag]
-        local owner feature
-
-        owner="$(echo "$image" | cut -d/ -f2)"
-        feature="$(echo "$image" | cut -d/ -f3 | cut -d: -f1)"
-        curl -fsSL "https://raw.githubusercontent.com/$owner/features/main/src/$feature/devcontainer-feature.json" 2>/dev/null || true
-    }
-
-    # ---------------------------------------------------------
-    # Recursively resolve dependencies for a feature. Handles
-    # both local repo features and ghcr.io remote features.
-    # ---------------------------------------------------------
-    resolve_dependencies() {
-        local feature="$1"
-        local deps path json
-
-        # Skip if already processed to avoid infinite loops
-        [[ -n "${RESOLVED[$feature]+_}" ]] && return
-        RESOLVED["$feature"]=1
-
-        if [[ "$feature" == ghcr.io/* ]]; then
-            # Remote feature: download its metadata
-            json="$(fetch_remote_feature_json "$feature")"
-            deps=$(echo "$json" | jq -r '.dependsOn | keys[]?' 2>/dev/null || true)
-        else
-            # Local feature in the repo
-            path="$FEATURES_ROOT/$feature/devcontainer-feature.json"
-            [[ -f "$path" ]] || return
-            deps=$(jq -r '.dependsOn | keys[]?' "$path" 2>/dev/null || true)
-        fi
-
-        # Walk each dependency entry
-        for dep in $deps; do
-            dep="${dep#./features/}"
-            resolve_dependencies "$dep"
-        done
-    }
-
-    # Resolve dependencies for each user-selected feature
-    for feat in "${USER_SELECTED[@]}"; do
-        resolve_dependencies "$feat"
-    done
-
-    # Build final list of features using ghcr paths for remote features
-    ALL_FEATURES=()
-    for f in "${!RESOLVED[@]}"; do
-        if [[ "$f" == ghcr.io/* ]]; then
-            ALL_FEATURES+=("$f")
-        else
-            ALL_FEATURES+=("$GHCR_NAMESPACE/$f:latest")
-        fi
-    done
-    IFS=$'\n' ALL_FEATURES=($(sort <<<"${ALL_FEATURES[*]}"))
-
-    # Determine which features were added implicitly via dependencies
-    IMPLICIT_ADDITIONS=()
-    for f in "${!RESOLVED[@]}"; do
-        if [[ -z "${USER_MAP[$f]+_}" ]]; then
-            if [[ "$f" == ghcr.io/* ]]; then
-                IMPLICIT_ADDITIONS+=("$f")
-            else
-                IMPLICIT_ADDITIONS+=("$GHCR_NAMESPACE/$f:latest")
-            fi
-        fi
-    done
-
-    # Notify user of automatic additions
-    if [[ ${#IMPLICIT_ADDITIONS[@]} -gt 0 ]]; then
-        local msg="The following dependent features were automatically added:\n\n"
-        for f in "${IMPLICIT_ADDITIONS[@]}"; do
-            msg+="• $f\n"
-        done
-        dialog --title "Dependencies Added" --msgbox "$msg" 15 60
-    fi
-}
-
-# Create project
-create_project() {
-    TEMPLATE_PATH="$TEMPLATE_ROOT/$TEMPLATE_NAME"
-
-    # Create project structure
-    mkdir -p "$DEST_DIR/.devcontainer"
-    cp -r "$TEMPLATE_PATH/.devcontainer/." "$DEST_DIR/.devcontainer/"
-    cp "$TEMPLATE_PATH/metadata.json" "$DEST_DIR/.devcontainer/" 2>/dev/null || true
-    cp "$TEMPLATE_PATH/README.md" "$DEST_DIR/" 2>/dev/null || true
-    mkdir -p "$DEST_DIR/src"
-
-    # Process devcontainer.json
-    DEVCONTAINER_JSON="$DEST_DIR/.devcontainer/devcontainer.json"
-    if ! jq empty "$DEVCONTAINER_JSON" 2>/dev/null; then
-        echo "❌ ERROR: Invalid devcontainer.json in template. Aborting."
-        exit 1
-    fi
-
-    # Add features if any were selected
-    if [[ ${#ALL_FEATURES[@]} -gt 0 ]]; then
-        FEATURES_JSON=$(printf "%s\n" "${ALL_FEATURES[@]}" \
-            | jq -Rs 'split("\n")[:-1] | map({ (.): {} }) | add')
-        jq --argjson features "$FEATURES_JSON" '.features = $features' \
-            "$DEVCONTAINER_JSON" > "$DEVCONTAINER_JSON.tmp" && mv "$DEVCONTAINER_JSON.tmp" "$DEVCONTAINER_JSON"
-    fi
-
-   # Inject base configuration
-   jq '. + {
-     "remoteUser": "root",
-     "updateRemoteUserUID": true,
-     "overrideCommand": false,
-     "remoteEnv": {
-       "HOME": "/root",
-       "SHELL": "/usr/bin/zsh"
-     },
-     "postCreateCommand": "bash .devcontainer/bootstrap.sh",
-     "settings": {
-       "terminal.integrated.defaultProfile.linux": "zsh",
-       "terminal.integrated.shellIntegration.enabled": true,
-       "terminal.integrated.profiles.linux": {
-         "zsh": {
-           "path": "/usr/bin/zsh",
-           "args": ["-l"]
-         }
-       },
-       "editor.formatOnSave": true
-     },
-     "mounts": [
-       "source=${env:HOME}/.ssh/dotfiles_deploy_key,target=/root/.ssh/dotfiles_deploy_key,type=bind,consistency=cached",
-       "source=${localEnv:HOME}/.ssh,target=/mnt/ssh,type=bind,consistency=cached",
-       "source=${localEnv:HOME}/.aws,target=/root/.aws,type=bind,consistency=cached",
-       "source=${localEnv:HOME}/.aws/sso/cache,target=/root/.aws/sso/cache,type=bind,consistency=cached",
-       "source=${localEnv:HOME}/code/dotfiles,target=/root/code/dotfiles,type=bind,consistency=cached",
-       "source=${env:HOME}/.dotfiles_token,target=/root/.dotfiles_token,type=bind,consistency=cached"
-     ]
-   }' "$DEVCONTAINER_JSON" > "$DEVCONTAINER_JSON.tmp" && mv "$DEVCONTAINER_JSON.tmp" "$DEVCONTAINER_JSON"
-
-    # Initialize git repository
-    cd "$DEST_DIR"
-    git init -b main
-    git add .
-    git commit -m "Initial commit using $TEMPLATE_NAME template"
-}
-
-# Cleanup function
+WORKDIR=$(mktemp -d)
 cleanup() {
-    if [[ -n "${DEVCONTAINER_LOCAL:-}" && -d "$DEVCONTAINER_LOCAL" ]]; then
-        rm -rf "$DEVCONTAINER_LOCAL"
+  rm -f "$DIALOG_TEMP"
+  rm -rf "$WORKDIR"
+}
+# Run cleanup when the script exits normally (EXIT), is interrupted (INT), or terminated (TERM)
+trap cleanup EXIT INT TERM
+
+# ---Script Dependency Check ---
+check_dependencies() {
+  local missing=()
+  command -v dialog >/dev/null || missing+=("dialog")
+  command -v jq >/dev/null || missing+=("jq")
+  command -v git >/dev/null || missing+=("git")
+  command -v curl >/dev/null || missing+=("curl")
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    if dialog --yesno "Missing required dependencies:\n${missing[*]}\n\nAttempt to install them now?" 10 60; then
+      if command -v apt-get >/dev/null; then
+        sudo apt-get update && sudo apt-get install -y "${missing[@]}"
+      elif command -v yum >/dev/null; then
+        sudo yum install -y "${missing[@]}"
+      elif command -v brew >/dev/null; then
+        brew install "${missing[@]}"
+      else
+        dialog --msgbox "Automatic installation not supported on this system." 8 60
+        exit 1
+      fi
+    else
+      dialog --msgbox "We can't proceed without these dependencies :(" 6 60
+      exit 1
     fi
-    rm -f "$DIALOG_TEMP"
+  fi
 }
 
-# Main function
-main() {
-    # Setup cleanup trap
-    trap cleanup EXIT
-    # Parse arguments first
-    parse_args "$@"
-    # Load configuration
-    load_config
-    # Check dependencies
-    check_dependencies
-    # Validate configuration
-    validate_config
-    # Main workflow
-    clone_devcontainer_repo
-    select_template
-    get_project_details
-    select_features
-    create_project
+# --- Base image selection (from select-base-image.sh) ---
+select_base_image() {
+  dialog --title "Select Base Image" --menu "Choose a base image:" 15 60 9 \
+    "ubuntu" "Ubuntu-based devcontainer" \
+    "debian" "Debian-based devcontainer" \
+    "alpine" "Alpine-based devcontainer" \
+    "noble" "Universal (noble)" \
+    "linux" "Universal (linux)" \
+    "focal" "Universal (focal)" 2>"$DIALOG_TEMP"
 
-    # Success message with dialog
-    dialog --title "Success!" --msgbox "✅ Project created successfully!\n\nLocation: $DEST_DIR\n\nYou can now open this directory in VS Code with the Dev Containers extension." 10 60
+  BASE_SELECTION=$(<"$DIALOG_TEMP")
+  if [[ "$BASE_SELECTION" =~ ^(noble|linux|focal)$ ]]; then
+    IS_UNIVERSAL=1
+    UNIVERSAL_VARIANT="$BASE_SELECTION"
+    BASE_FAMILY="universal"
+  else
+    IS_UNIVERSAL=0
+    BASE_FAMILY="$BASE_SELECTION"
+  fi
 
-    echo "Project Summary"
-    echo "Name: $PROJECT_NAME"
-    echo "Template: $TEMPLATE_NAME"
-    echo "Features:"
-    printf "  - %s\n" "${ALL_FEATURES[@]}"
-    echo "Destination: $DEST_DIR"
+  dialog --title "Select Version Option" --menu "How do you want to select the version?" 10 50 2 \
+    "latest" "Use the latest tag for $BASE_SELECTION" \
+    "select" "Select from available tags" 2>"$DIALOG_TEMP"
+  VERSION_MODE=$(<"$DIALOG_TEMP")
 
+  if [[ "$VERSION_MODE" == "latest" ]]; then
+    if [[ $IS_UNIVERSAL -eq 1 ]]; then
+      FINAL_TAG="$UNIVERSAL_VARIANT"
+    else
+      FINAL_TAG="$BASE_FAMILY"
+    fi
+  else
+    echo "Fetching available tags from MCR..."
+    if [[ $IS_UNIVERSAL -eq 1 ]]; then
+      MCR_TAGS_URL="https://mcr.microsoft.com/v2/devcontainers/universal/tags/list"
+      TAGS=$(curl -s "$MCR_TAGS_URL" | jq -r '.tags[]' | grep -E "(^$UNIVERSAL_VARIANT$|-$UNIVERSAL_VARIANT$)" | sort -V)
+    else
+      MCR_TAGS_URL="https://mcr.microsoft.com/v2/devcontainers/base/tags/list"
+      TAGS=$(curl -s "$MCR_TAGS_URL" | jq -r '.tags[]' | grep "^$BASE_FAMILY" | sort)
+    fi
+
+    declare -A LTS_MAP
+    if [[ $IS_UNIVERSAL -eq 1 ]]; then
+      LTS_MAP=()
+    elif [[ "$BASE_FAMILY" == "ubuntu" ]]; then
+      LTS_MAP=(
+        ["ubuntu"]="Latest LTS"
+        ["ubuntu-22.04"]="Jammy (22.04)"
+        ["jammy"]="Alias: 22.04"
+        ["ubuntu-20.04"]="Focal (20.04)"
+        ["focal"]="Alias: 20.04"
+      )
+    elif [[ "$BASE_FAMILY" == "debian" ]]; then
+      LTS_MAP=(
+        ["debian"]="Latest Stable"
+        ["debian-bookworm"]="Bookworm (12)"
+        ["bookworm"]="Alias: 12"
+        ["debian-bullseye"]="Bullseye (11)"
+        ["bullseye"]="Alias: 11"
+      )
+    elif [[ "$BASE_FAMILY" == "alpine" ]]; then
+      LTS_MAP=(
+        ["alpine"]="Latest Stable"
+        ["alpine-3.19"]="3.19"
+        ["alpine-3.18"]="3.18"
+      )
+    fi
+
+    TAG_MENU=()
+    while IFS= read -r tag; do
+      label="${LTS_MAP[$tag]:-Tag: $tag}"
+      TAG_MENU+=("$tag" "$label")
+    done <<< "$TAGS"
+
+    if [[ ${#TAG_MENU[@]} -eq 0 ]]; then
+      dialog --msgbox "No tags found for $BASE_SELECTION." 8 40
+      exit 1
+    fi
+
+    dialog --title "Choose Tag for $BASE_SELECTION" --menu \
+      "Select a version tag for your base image:" 20 60 15 "${TAG_MENU[@]}" 2>"$DIALOG_TEMP"
+    FINAL_TAG=$(<"$DIALOG_TEMP")
+  fi
+
+  if [[ $IS_UNIVERSAL -eq 1 ]]; then
+    FINAL_IMAGE="mcr.microsoft.com/devcontainers/universal:$FINAL_TAG"
+  else
+    FINAL_IMAGE="mcr.microsoft.com/devcontainers/base:$FINAL_TAG"
+  fi
 }
 
-# Run main function with all arguments
-main "$@"
+# --- Feature discovery and configuration ---
+GITHUB_ACCOUNTS=("devcontainers" "blackwd-bwh")
+BRANCH="main"
+declare -A FEATURE_PATHS
+declare -A FEATURE_ORIGINS
+declare -A FEATURE_OPTS
+declare -A FEATURE_VERSIONS
+
+clone_repo() {
+  local account="$1"
+  local repo="https://github.com/$account/features.git"
+  local target_dir="$WORKDIR/$account"
+  echo "Cloning $repo..." >&2
+  if git clone --quiet --depth 1 --branch "$BRANCH" "$repo" "$target_dir"; then
+    echo "Cloned $account/features" >&2
+    echo "$target_dir/src"
+  else
+    echo "❌ Failed to clone $repo" >&2
+    return 1
+  fi
+}
+
+gather_all_features() {
+  ALL_MENU_ITEMS=()
+  for account in "${GITHUB_ACCOUNTS[@]}"; do
+    src_path=$(clone_repo "$account") || continue
+    for feature_path in "$src_path"/*; do
+      if [[ -f "$feature_path/devcontainer-feature.json" ]]; then
+        feature_id="$(basename "$feature_path")"
+        desc=$(jq -r '.description // "No description."' "$feature_path/devcontainer-feature.json")
+        key="$account:$feature_id"
+        FEATURE_PATHS["$key"]="$feature_path"
+        FEATURE_ORIGINS["$key"]="$account"
+        ALL_MENU_ITEMS+=("$key" "$(printf '%-20s' "$desc")" "off")
+      fi
+    done
+  done
+}
+
+select_features() {
+  dialog --checklist "Select features to include:\n(Use SPACE to select)" 30 150 12 \
+    "${ALL_MENU_ITEMS[@]}" 2>"$WORKDIR/selected"
+  read -ra SELECTED_FEATURES <<< "$(tr -d '"' < "$WORKDIR/selected")"
+}
+
+## ---------------------------------------------------------------------------
+## Dependency Resolution Helpers
+## ---------------------------------------------------------------------------
+
+# Fetch devcontainer-feature.json from GitHub for a ghcr.io feature reference
+fetch_remote_feature_json() {
+  local ref="$1"                           # ghcr.io/<owner>/features/<id>:<tag>
+  local owner feature
+  owner="$(echo "$ref" | cut -d/ -f2)"
+  feature="$(echo "$ref" | cut -d/ -f4 | cut -d: -f1)"
+  curl -fsSL "https://raw.githubusercontent.com/$owner/features/main/src/$feature/devcontainer-feature.json" 2>/dev/null || true
+}
+
+# Recursively resolve dependsOn entries for a feature reference
+resolve_dependencies() {
+  local ref="$1"                   # fully qualified ghcr feature reference
+
+  # Avoid infinite recursion if already processed
+  [[ -n "${RESOLVED[$ref]+_}" ]] && return
+  RESOLVED["$ref"]=1
+
+  local owner feature key json deps path
+  owner="$(echo "$ref" | cut -d/ -f2)"
+  feature="$(echo "$ref" | cut -d/ -f4 | cut -d: -f1)"
+  key="$owner:$feature"
+
+  # Prefer local clone if available, else fetch from GitHub
+  if [[ -n "${FEATURE_PATHS[$key]+_}" ]]; then
+    path="${FEATURE_PATHS[$key]}/devcontainer-feature.json"
+    json="$(cat "$path")"
+  else
+    json="$(fetch_remote_feature_json "$ref")"
+  fi
+
+  # Grab dependency keys, if any
+  deps=$(echo "$json" | jq -r '.dependsOn | keys[]?' 2>/dev/null || true)
+  for dep in $deps; do
+    # Strip local relative prefixes
+    dep="${dep#./features/}"
+    dep="${dep#./}"
+
+    # Expand to ghcr reference if not already
+    if [[ "$dep" != ghcr.io/* ]]; then
+      dep="ghcr.io/$owner/features/$dep:latest"
+    fi
+    [[ "$dep" != *:* ]] && dep+=":latest"
+
+    resolve_dependencies "$dep"
+  done
+}
+
+resolve_all_dependencies() {
+  declare -gA RESOLVED=()
+  declare -gA USER_MAP=()
+
+  # Map user selections for later comparison
+  for key in "${SELECTED_FEATURES[@]}"; do
+    USER_MAP["$key"]=1
+    origin="${FEATURE_ORIGINS[$key]}"
+    id="${key#*:}"
+    version="${FEATURE_VERSIONS[$key]}"
+    resolve_dependencies "ghcr.io/$origin/features/$id:$version"
+  done
+
+  # Build final list of feature refs
+  mapfile -t ALL_FEATURE_REFS < <(printf "%s\n" "${!RESOLVED[@]}" | sort)
+
+  # Compute which refs were added implicitly
+  IMPLICIT_ADDITIONS=()
+  for ref in "${ALL_FEATURE_REFS[@]}"; do
+    owner="$(echo "$ref" | cut -d/ -f2)"
+    feature="$(echo "$ref" | cut -d/ -f4 | cut -d: -f1)"
+    key="$owner:$feature"
+    [[ -z "${USER_MAP[$key]+_}" ]] && IMPLICIT_ADDITIONS+=("$ref")
+  done
+
+  # Inform the user if we added dependencies automatically
+  if [[ ${#IMPLICIT_ADDITIONS[@]} -gt 0 ]]; then
+    local msg="The following dependent features were automatically added:\n\n"
+    for f in "${IMPLICIT_ADDITIONS[@]}"; do
+      msg+="• $f\n"
+    done
+    dialog --title "Dependencies Added" --msgbox "$msg" 15 60
+  fi
+}
+
+configure_feature() {
+  local key="$1"
+  local path="${FEATURE_PATHS[$key]}"
+  local version
+  version=$(jq -r '.version // "latest"' "$path/devcontainer-feature.json")
+  local options_json
+  options_json=$(jq -c '.options // {}' "$path/devcontainer-feature.json")
+  declare -A selected_opts
+
+  if [[ "$options_json" != "{}" ]]; then
+    for opt in $(echo "$options_json" | jq -r 'keys[]'); do
+      type=$(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].type')
+      desc=$(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].description // "No description"')
+      default=$(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].default')
+
+      if [[ "$type" == "string" && $(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].proposals | length') -gt 0 ]]; then
+        mapfile -t options < <(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].proposals[]')
+        radio_items=()
+        for val in "${options[@]}"; do
+          radio_items+=("$val" "$desc" "$([[ "$val" == "$default" ]] && echo "on" || echo "off")")
+        done
+        selected=$(dialog --radiolist "$desc" 15 60 8 "${radio_items[@]}" 3>&1 1>&2 2>&3 || true)
+        selected_opts["$opt"]="${selected:-$default}"
+      elif [[ "$type" == "string" ]]; then
+        selected=$(dialog --inputbox "$desc" 10 60 "$default" 3>&1 1>&2 2>&3 || true)
+        selected_opts["$opt"]="${selected:-$default}"
+      elif [[ "$type" == "boolean" ]]; then
+        if dialog --yesno "$desc" 8 60; then
+          selected_opts["$opt"]="true"
+        elif [[ $? -eq 1 ]]; then
+          selected_opts["$opt"]="false"
+        else
+          echo "Cancelled."
+          exit 1
+        fi
+      else
+        echo "Skipping unsupported option type: $type"
+      fi
+    done
+  fi
+
+  local opts="{}"
+  for k in "${!selected_opts[@]}"; do
+    if [[ ${selected_opts[$k]} =~ ^(true|false)$ ]]; then
+      opts=$(echo "$opts" | jq --arg k "$k" --argjson v "${selected_opts[$k]}" '. + {($k): $v}')
+    else
+      opts=$(echo "$opts" | jq --arg k "$k" --arg v "${selected_opts[$k]}" '. + {($k): $v}')
+    fi
+  done
+  FEATURE_OPTS["$key"]="$opts"
+  FEATURE_VERSIONS["$key"]="$version"
+}
+
+get_project_destination() {
+  DEFAULT_PARENT="$HOME/code"
+
+  # Ask for parent directory
+  if ! dialog --title "Select Project Location" --inputbox \
+    "Enter the parent directory where the new project folder should go:" 10 60 "$DEFAULT_PARENT" 2>"$DIALOG_TEMP"; then
+    echo "Cancelled."
+    exit 1
+  fi
+  PARENT_DIR=$(<"$DIALOG_TEMP")
+  [[ -z "$PARENT_DIR" ]] && echo "No parent directory provided." && exit 1
+  PARENT_DIR="${PARENT_DIR%/}" # remove trailing slash
+
+  # Ask for project name
+  if ! dialog --title "Project Name" --inputbox "Enter your new project name:" 8 50 2>"$DIALOG_TEMP"; then
+    echo "Cancelled."
+    exit 1
+  fi
+  PROJECT_NAME=$(<"$DIALOG_TEMP")
+  [[ -z "$PROJECT_NAME" ]] && echo "No project name provided." && exit 1
+
+  DEST_DIR="$PARENT_DIR/$PROJECT_NAME"
+
+  # Confirm
+  if ! dialog --title "Confirm" --yesno "Project directory will be:\n$DEST_DIR\n\nProceed?" 10 60; then
+    echo "Cancelled."
+    exit 1
+  fi
+
+  # Check for existing directory
+  if [[ -e "$DEST_DIR" ]]; then
+    dialog --title "Error" --msgbox "❌ Directory already exists:\n$DEST_DIR\nPlease choose a different name or location." 10 60
+    exit 1
+  fi
+
+  mkdir -p "$DEST_DIR/.devcontainer"
+}
+
+write_devcontainer() {
+  mkdir -p "$DEST_DIR/.devcontainer"
+  local features_obj="{}"
+
+  for ref in "${ALL_FEATURE_REFS[@]}"; do
+    owner="$(echo "$ref" | cut -d/ -f2)"
+    feature="$(echo "$ref" | cut -d/ -f4 | cut -d: -f1)"
+    key="$owner:$feature"
+    if [[ -n "${FEATURE_OPTS[$key]+_}" ]]; then
+      opts="${FEATURE_OPTS[$key]}"
+    else
+      opts="{}"
+    fi
+    features_obj=$(echo "$features_obj" | jq --arg ref "$ref" --argjson opt "$opts" '. + {($ref): $opt}')
+  done
+
+  jq -n \
+    --arg image "$FINAL_IMAGE" \
+    --argjson features "$features_obj" \
+    '{
+      image: $image,
+      features: $features
+    }' > "$DEST_DIR/.devcontainer/devcontainer.json"
+
+  echo "✅ .devcontainer/devcontainer.json created at $DEST_DIR/.devcontainer/devcontainer.json"
+
+  if command -v git >/dev/null && [[ ! -d "$DEST_DIR/.git" ]]; then
+    (
+      cd "$DEST_DIR"
+      git init -b main
+      git add .
+      git commit -m "Initial commit"
+    )
+  fi
+}
+
+# --- Main Execution ---
+check_dependencies
+select_base_image
+gather_all_features
+select_features
+for feat in "${SELECTED_FEATURES[@]}"; do
+  configure_feature "$feat"
+done
+resolve_all_dependencies
+get_project_destination
+write_devcontainer
