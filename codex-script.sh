@@ -304,7 +304,11 @@ configure_feature() {
 
   local opts="{}"
   for k in "${!selected_opts[@]}"; do
-    opts=$(echo "$opts" | jq --arg k "$k" --arg v "${selected_opts[$k]}" '. + {($k): $v}')
+    if [[ ${selected_opts[$k]} =~ ^(true|false)$ ]]; then
+      opts=$(echo "$opts" | jq --arg k "$k" --argjson v "${selected_opts[$k]}" '. + {($k): $v}')
+    else
+      opts=$(echo "$opts" | jq --arg k "$k" --arg v "${selected_opts[$k]}" '. + {($k): $v}')
+    fi
   done
   FEATURE_OPTS["$key"]="$opts"
   FEATURE_VERSIONS["$key"]="$version"
