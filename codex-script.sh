@@ -41,26 +41,49 @@ check_dependencies() {
 
 # --- Base image selection (from select-base-image.sh) ---
 select_base_image() {
-  dialog --title "Select Base Image" --menu "Choose a base image:" 12 50 3 \
+  dialog --title "Select Base Image" --menu "Choose a base image:" 15 60 9 \
     "ubuntu" "Ubuntu-based devcontainer" \
     "debian" "Debian-based devcontainer" \
-    "alpine" "Alpine-based devcontainer" 2>"$DIALOG_TEMP"
-  BASE_FAMILY=$(<"$DIALOG_TEMP")
+    "alpine" "Alpine-based devcontainer" \
+    "noble" "Universal (noble)" \
+    "linux" "Universal (linux)" \
+    "focal" "Universal (focal)" 2>"$DIALOG_TEMP"
+
+  BASE_SELECTION=$(<"$DIALOG_TEMP")
+  if [[ "$BASE_SELECTION" =~ ^(noble|linux|focal)$ ]]; then
+    IS_UNIVERSAL=1
+    UNIVERSAL_VARIANT="$BASE_SELECTION"
+    BASE_FAMILY="universal"
+  else
+    IS_UNIVERSAL=0
+    BASE_FAMILY="$BASE_SELECTION"
+  fi
 
   dialog --title "Select Version Option" --menu "How do you want to select the version?" 10 50 2 \
-    "latest" "Use the latest tag for $BASE_FAMILY" \
+    "latest" "Use the latest tag for $BASE_SELECTION" \
     "select" "Select from available tags" 2>"$DIALOG_TEMP"
   VERSION_MODE=$(<"$DIALOG_TEMP")
 
   if [[ "$VERSION_MODE" == "latest" ]]; then
-    FINAL_TAG="$BASE_FAMILY"
+    if [[ $IS_UNIVERSAL -eq 1 ]]; then
+      FINAL_TAG="$UNIVERSAL_VARIANT"
+    else
+      FINAL_TAG="$BASE_FAMILY"
+    fi
   else
     echo "Fetching available tags from MCR..."
-    MCR_TAGS_URL="https://mcr.microsoft.com/v2/devcontainers/base/tags/list"
-    TAGS=$(curl -s "$MCR_TAGS_URL" | jq -r '.tags[]' | grep "^$BASE_FAMILY" | sort)
+    if [[ $IS_UNIVERSAL -eq 1 ]]; then
+      MCR_TAGS_URL="https://mcr.microsoft.com/v2/devcontainers/universal/tags/list"
+      TAGS=$(curl -s "$MCR_TAGS_URL" | jq -r '.tags[]' | grep -E "(^$UNIVERSAL_VARIANT$|-$UNIVERSAL_VARIANT$)" | sort -V)
+    else
+      MCR_TAGS_URL="https://mcr.microsoft.com/v2/devcontainers/base/tags/list"
+      TAGS=$(curl -s "$MCR_TAGS_URL" | jq -r '.tags[]' | grep "^$BASE_FAMILY" | sort)
+    fi
 
     declare -A LTS_MAP
-    if [[ "$BASE_FAMILY" == "ubuntu" ]]; then
+    if [[ $IS_UNIVERSAL -eq 1 ]]; then
+      LTS_MAP=()
+    elif [[ "$BASE_FAMILY" == "ubuntu" ]]; then
       LTS_MAP=(
         ["ubuntu"]="Latest LTS"
         ["ubuntu-22.04"]="Jammy (22.04)"
@@ -91,16 +114,20 @@ select_base_image() {
     done <<< "$TAGS"
 
     if [[ ${#TAG_MENU[@]} -eq 0 ]]; then
-      dialog --msgbox "No tags found for $BASE_FAMILY." 8 40
+      dialog --msgbox "No tags found for $BASE_SELECTION." 8 40
       exit 1
     fi
 
-    dialog --title "Choose Tag for $BASE_FAMILY" --menu \
+    dialog --title "Choose Tag for $BASE_SELECTION" --menu \
       "Select a version tag for your base image:" 20 60 15 "${TAG_MENU[@]}" 2>"$DIALOG_TEMP"
     FINAL_TAG=$(<"$DIALOG_TEMP")
   fi
 
-  FINAL_IMAGE="mcr.microsoft.com/devcontainers/base:$FINAL_TAG"
+  if [[ $IS_UNIVERSAL -eq 1 ]]; then
+    FINAL_IMAGE="mcr.microsoft.com/devcontainers/universal:$FINAL_TAG"
+  else
+    FINAL_IMAGE="mcr.microsoft.com/devcontainers/base:$FINAL_TAG"
+  fi
 }
 
 # --- Feature discovery and configuration (from discover-github-feature3.sh) ---
