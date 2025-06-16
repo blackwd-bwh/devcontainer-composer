@@ -11,7 +11,8 @@ cleanup() {
   rm -f "$DIALOG_TEMP"
   rm -rf "$WORKDIR"
 }
-trap cleanup EXIT
+# Run cleanup when the script exits normally (EXIT), is interrupted (INT), or terminated (TERM)
+trap cleanup EXIT INT TERM
 
 # ---Script Dependency Check ---
 check_dependencies() {
