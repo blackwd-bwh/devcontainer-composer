@@ -240,7 +240,7 @@ resolve_all_dependencies() {
   done
 
   # Build final list of feature refs
-  ALL_FEATURE_REFS=($(printf "%s\n" "${!RESOLVED[@]}" | sort))
+  mapfile -t ALL_FEATURE_REFS < <(printf "%s\n" "${!RESOLVED[@]}" | sort)
 
   # Compute which refs were added implicitly
   IMPLICIT_ADDITIONS=()
@@ -277,7 +277,7 @@ configure_feature() {
       default=$(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].default')
 
       if [[ "$type" == "string" && $(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].proposals | length') -gt 0 ]]; then
-        options=($(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].proposals[]'))
+        mapfile -t options < <(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].proposals[]')
         radio_items=()
         for val in "${options[@]}"; do
           radio_items+=("$val" "$desc" "$([[ "$val" == "$default" ]] && echo "on" || echo "off")")
