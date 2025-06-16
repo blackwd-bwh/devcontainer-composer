@@ -154,10 +154,18 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case $1 in
       -a|--accounts)
+        if [[ -z ${2-} ]]; then
+          echo "Error: --accounts requires an argument." >&2
+          exit 1
+        fi
         IFS=',' read -ra FEATURE_ACCOUNTS <<< "$2"
         shift 2
         ;;
       -b|--branch)
+        if [[ -z ${2-} ]]; then
+          echo "Error: --branch requires an argument." >&2
+          exit 1
+        fi
         FEATURE_BRANCH="$2"
         shift 2
         ;;
