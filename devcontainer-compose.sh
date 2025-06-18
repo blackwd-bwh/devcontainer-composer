@@ -386,7 +386,8 @@ write_devcontainer() {
   jq -n \
     --arg image "$FINAL_IMAGE" \
     --argjson features "$features_obj" \
-    '($features == {} ? {image: $image} : {image: $image, features: $features})' > "$DEST_DIR/.devcontainer/devcontainer.json"
+    'if ($features | length) == 0 then {image: $image} else {image: $image, features: $features} end' \
+    > "$DEST_DIR/.devcontainer/devcontainer.json"
 
   echo "✅ .devcontainer/devcontainer.json created at $DEST_DIR/.devcontainer/devcontainer.json"
 
