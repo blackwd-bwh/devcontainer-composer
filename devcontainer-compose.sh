@@ -172,9 +172,12 @@ gather_all_features() {
 }
 
 select_features() {
-  dialog --checklist "Select features to include:\n(Use SPACE to select)" 30 150 12 \
-    "${ALL_MENU_ITEMS[@]}" 2>"$WORKDIR/selected"
-  read -ra SELECTED_FEATURES <<< "$(tr -d '"' < "$WORKDIR/selected")"
+  if dialog --checklist "Select features to include:\n(Use SPACE to select)" 30 150 12 \
+    "${ALL_MENU_ITEMS[@]}" 2>"$WORKDIR/selected"; then
+    read -ra SELECTED_FEATURES <<< "$(tr -d '"' < "$WORKDIR/selected")"
+  else
+    SELECTED_FEATURES=()
+  fi
 }
 
 ## ---------------------------------------------------------------------------
