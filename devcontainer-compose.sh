@@ -172,9 +172,12 @@ gather_all_features() {
 }
 
 select_features() {
-  dialog --checklist "Select features to include:\n(Use SPACE to select)" 30 150 12 \
-    "${ALL_MENU_ITEMS[@]}" 2>"$WORKDIR/selected"
-  read -ra SELECTED_FEATURES <<< "$(tr -d '"' < "$WORKDIR/selected")"
+  if dialog --checklist "Select features to include:\n(Use SPACE to select)" 30 150 12 \
+    "${ALL_MENU_ITEMS[@]}" 2>"$WORKDIR/selected"; then
+    read -ra SELECTED_FEATURES <<< "$(tr -d '"' < "$WORKDIR/selected")"
+  else
+    SELECTED_FEATURES=()
+  fi
 }
 
 ## ---------------------------------------------------------------------------
@@ -242,7 +245,11 @@ resolve_all_dependencies() {
   done
 
   # Build final list of feature refs
-  mapfile -t ALL_FEATURE_REFS < <(printf "%s\n" "${!RESOLVED[@]}" | sort)
+  if [[ ${#RESOLVED[@]} -gt 0 ]]; then
+    mapfile -t ALL_FEATURE_REFS < <(printf "%s\n" "${!RESOLVED[@]}" | sort)
+  else
+    ALL_FEATURE_REFS=()
+  fi
 
   # Compute which refs were added implicitly
   IMPLICIT_ADDITIONS=()
@@ -254,7 +261,7 @@ resolve_all_dependencies() {
   done
 
   # Inform the user if we added dependencies automatically
-  if [[ ${#IMPLICIT_ADDITIONS[@]} -gt 0 ]]; then
+  if [[ ${#SELECTED_FEATURES[@]} -gt 0 && ${#IMPLICIT_ADDITIONS[@]} -gt 0 ]]; then
     local msg="The following dependent features were automatically added:\n\n"
     for f in "${IMPLICIT_ADDITIONS[@]}"; do
       msg+="• $f\n"
@@ -370,13 +377,18 @@ write_devcontainer() {
     features_obj=$(echo "$features_obj" | jq --arg ref "$ref" --argjson opt "$opts" '. + {($ref): $opt}')
   done
 
-  jq -n \
-    --arg image "$FINAL_IMAGE" \
-    --argjson features "$features_obj" \
-    '{
-      image: $image,
-      features: $features
-    }' > "$DEST_DIR/.devcontainer/devcontainer.json"
+  if [[ "$features_obj" == "{}" ]]; then
+    jq -n --arg image "$FINAL_IMAGE" '{ image: $image }' \
+      > "$DEST_DIR/.devcontainer/devcontainer.json"
+  else
+    jq -n \
+      --arg image "$FINAL_IMAGE" \
+      --argjson features "$features_obj" \
+      '{
+        image: $image,
+        features: $features
+      }' > "$DEST_DIR/.devcontainer/devcontainer.json"
+  fi
 
   echo "✅ .devcontainer/devcontainer.json created at $DEST_DIR/.devcontainer/devcontainer.json"
 
