@@ -172,9 +172,12 @@ gather_all_features() {
 }
 
 select_features() {
-  dialog --checklist "Select features to include:\n(Use SPACE to select)" 30 150 12 \
-    "${ALL_MENU_ITEMS[@]}" 2>"$WORKDIR/selected"
-  read -ra SELECTED_FEATURES <<< "$(tr -d '"' < "$WORKDIR/selected")"
+  if dialog --checklist "Select features to include:\n(Use SPACE to select)" 30 150 12 \
+    "${ALL_MENU_ITEMS[@]}" 2>"$WORKDIR/selected"; then
+    read -ra SELECTED_FEATURES <<< "$(tr -d '"' < "$WORKDIR/selected")"
+  else
+    SELECTED_FEATURES=()
+  fi
 }
 
 ## ---------------------------------------------------------------------------
@@ -231,6 +234,12 @@ resolve_dependencies() {
 resolve_all_dependencies() {
   declare -gA RESOLVED=()
   declare -gA USER_MAP=()
+  ALL_FEATURE_REFS=()
+  IMPLICIT_ADDITIONS=()
+
+  if [[ ${#SELECTED_FEATURES[@]} -eq 0 ]]; then
+    return
+  fi
 
   # Map user selections for later comparison
   for key in "${SELECTED_FEATURES[@]}"; do
@@ -242,7 +251,11 @@ resolve_all_dependencies() {
   done
 
   # Build final list of feature refs
-  mapfile -t ALL_FEATURE_REFS < <(printf "%s\n" "${!RESOLVED[@]}" | sort)
+  if [[ ${#RESOLVED[@]} -gt 0 ]]; then
+    mapfile -t ALL_FEATURE_REFS < <(printf "%s\n" "${!RESOLVED[@]}" | sort)
+  else
+    ALL_FEATURE_REFS=()
+  fi
 
   # Compute which refs were added implicitly
   IMPLICIT_ADDITIONS=()
@@ -373,10 +386,8 @@ write_devcontainer() {
   jq -n \
     --arg image "$FINAL_IMAGE" \
     --argjson features "$features_obj" \
-    '{
-      image: $image,
-      features: $features
-    }' > "$DEST_DIR/.devcontainer/devcontainer.json"
+    'if ($features | length) == 0 then {image: $image} else {image: $image, features: $features} end' \
+    > "$DEST_DIR/.devcontainer/devcontainer.json"
 
   echo "✅ .devcontainer/devcontainer.json created at $DEST_DIR/.devcontainer/devcontainer.json"
 
