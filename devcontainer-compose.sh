@@ -245,7 +245,11 @@ resolve_all_dependencies() {
   done
 
   # Build final list of feature refs
-  mapfile -t ALL_FEATURE_REFS < <(printf "%s\n" "${!RESOLVED[@]}" | sort)
+  if [[ ${#RESOLVED[@]} -gt 0 ]]; then
+    mapfile -t ALL_FEATURE_REFS < <(printf "%s\n" "${!RESOLVED[@]}" | sort)
+  else
+    ALL_FEATURE_REFS=()
+  fi
 
   # Compute which refs were added implicitly
   IMPLICIT_ADDITIONS=()
