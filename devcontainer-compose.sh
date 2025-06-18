@@ -332,39 +332,55 @@ configure_feature() {
 get_project_destination() {
   DEFAULT_PARENT="$HOME/code"
 
-  # Ask for parent directory
-  if ! dialog --title "Select Project Location" --inputbox \
-    "Enter the parent directory where the new project folder should go:" 10 60 "$DEFAULT_PARENT" 2>"$DIALOG_TEMP"; then
-    echo "Cancelled."
-    exit 1
-  fi
-  PARENT_DIR=$(<"$DIALOG_TEMP")
-  [[ -z "$PARENT_DIR" ]] && echo "No parent directory provided." && exit 1
-  PARENT_DIR="${PARENT_DIR%/}" # remove trailing slash
+  while true; do
+    # Ask for parent directory
+    if ! dialog --title "Select Project Location" --inputbox \
+      "Enter the parent directory where the new project folder should go:" 10 60 "$DEFAULT_PARENT" 2>"$DIALOG_TEMP"; then
+      echo "Cancelled."
+      exit 1
+    fi
+    PARENT_DIR=$(<"$DIALOG_TEMP")
+    [[ -z "$PARENT_DIR" ]] && echo "No parent directory provided." && exit 1
+    PARENT_DIR="${PARENT_DIR%/}" # remove trailing slash
 
-  # Ask for project name
-  if ! dialog --title "Project Name" --inputbox "Enter your new project name:" 8 50 2>"$DIALOG_TEMP"; then
-    echo "Cancelled."
-    exit 1
-  fi
-  PROJECT_NAME=$(<"$DIALOG_TEMP")
-  [[ -z "$PROJECT_NAME" ]] && echo "No project name provided." && exit 1
+    # Ask for project name
+    if ! dialog --title "Project Name" --inputbox "Enter your new project name:" 8 50 2>"$DIALOG_TEMP"; then
+      echo "Cancelled."
+      exit 1
+    fi
+    PROJECT_NAME=$(<"$DIALOG_TEMP")
+    [[ -z "$PROJECT_NAME" ]] && echo "No project name provided." && exit 1
 
-  DEST_DIR="$PARENT_DIR/$PROJECT_NAME"
+    DEST_DIR="$PARENT_DIR/$PROJECT_NAME"
 
-  # Confirm
-  if ! dialog --title "Confirm" --yesno "Project directory will be:\n$DEST_DIR\n\nProceed?" 10 60; then
-    echo "Cancelled."
-    exit 1
-  fi
+    # Confirm
+    if ! dialog --title "Confirm" --yesno "Project directory will be:\n$DEST_DIR\n\nProceed?" 10 60; then
+      echo "Cancelled."
+      exit 1
+    fi
 
-  # Check for existing directory
-  if [[ -e "$DEST_DIR" ]]; then
-    dialog --title "Error" --msgbox "❌ Directory already exists:\n$DEST_DIR\nPlease choose a different name or location." 10 60
-    exit 1
-  fi
-
-  mkdir -p "$DEST_DIR/.devcontainer"
+    if [[ -e "$DEST_DIR" ]]; then
+      dialog --title "Directory Exists" --menu "The directory $DEST_DIR already exists. What would you like to do?" 12 60 2 \
+        change "Choose a different location" \
+        overwrite "Delete and use this directory" 2>"$DIALOG_TEMP"
+      CHOICE=$(<"$DIALOG_TEMP")
+      if [[ "$CHOICE" == "overwrite" ]]; then
+        if dialog --yesno "Delete existing directory and continue?" 8 60; then
+          rm -rf "$DEST_DIR"
+          mkdir -p "$DEST_DIR/.devcontainer"
+          break
+        else
+          continue
+        fi
+      else
+        # choose a different location
+        continue
+      fi
+    else
+      mkdir -p "$DEST_DIR/.devcontainer"
+      break
+    fi
+  done
 }
 
 write_devcontainer() {
