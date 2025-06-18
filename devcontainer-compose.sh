@@ -234,6 +234,12 @@ resolve_dependencies() {
 resolve_all_dependencies() {
   declare -gA RESOLVED=()
   declare -gA USER_MAP=()
+  ALL_FEATURE_REFS=()
+  IMPLICIT_ADDITIONS=()
+
+  if [[ ${#SELECTED_FEATURES[@]} -eq 0 ]]; then
+    return
+  fi
 
   # Map user selections for later comparison
   for key in "${SELECTED_FEATURES[@]}"; do
@@ -380,10 +386,7 @@ write_devcontainer() {
   jq -n \
     --arg image "$FINAL_IMAGE" \
     --argjson features "$features_obj" \
-    '{
-      image: $image,
-      features: $features
-    }' > "$DEST_DIR/.devcontainer/devcontainer.json"
+    '($features == {} ? {image: $image} : {image: $image, features: $features})' > "$DEST_DIR/.devcontainer/devcontainer.json"
 
   echo "✅ .devcontainer/devcontainer.json created at $DEST_DIR/.devcontainer/devcontainer.json"
 
