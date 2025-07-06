@@ -179,6 +179,7 @@ declare -A FEATURE_PATHS
 declare -A FEATURE_ORIGINS
 declare -A FEATURE_OPTS
 declare -A FEATURE_VERSIONS
+declare -a SELECTED_FEATURES=()
 
 clone_repo() {
   local account="$1"
