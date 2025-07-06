@@ -11,7 +11,9 @@ set -euo pipefail
 # resulting configuration is written to disk and committed to Git.
 # ===============================================================
 
+#Create temporary file
 DIALOG_TEMP=$(mktemp)
+#Create temporary directory
 WORKDIR=$(mktemp -d)
 
 # Remove temporary files and directories that hold dialog results and
@@ -28,12 +30,14 @@ trap cleanup EXIT INT TERM
 # Ensure required utilities are installed. If any are missing the user is
 # offered an option to install them via the system package manager.
 check_dependencies() {
+  # declare local array: missing
   local missing=()
   command -v dialog >/dev/null || missing+=("dialog")
   command -v jq >/dev/null || missing+=("jq")
   command -v git >/dev/null || missing+=("git")
   command -v curl >/dev/null || missing+=("curl")
-
+  
+  # if the missing array is not empty..
   if [[ ${#missing[@]} -gt 0 ]]; then
     if dialog --yesno "Missing required dependencies:\n${missing[*]}\n\nAttempt to install them now?" 10 60; then
       if command -v apt-get >/dev/null; then
@@ -62,11 +66,13 @@ select_base_image() {
     "ubuntu" "Ubuntu-based devcontainer" \
     "debian" "Debian-based devcontainer" \
     "alpine" "Alpine-based devcontainer" \
-    "noble" "Universal (noble)" \
-    "linux" "Universal (linux)" \
-    "focal" "Universal (focal)" 2>"$DIALOG_TEMP"
+    "noble" "Universal (Ubuntu 24.04 LTS)" \
+    "focal" "Universal (Ubuntu 20.04 LTS)" \
+    "linux" "Universal (Minimal)" \
+    2>"$DIALOG_TEMP"                             # dialog writes the selected option to stderr, so we redirect it to a temp file
 
   BASE_SELECTION=$(<"$DIALOG_TEMP")
+
   if [[ "$BASE_SELECTION" =~ ^(noble|linux|focal)$ ]]; then
     IS_UNIVERSAL=1
     UNIVERSAL_VARIANT="$BASE_SELECTION"
@@ -76,52 +82,55 @@ select_base_image() {
     BASE_FAMILY="$BASE_SELECTION"
   fi
 
-  dialog --title "Select Version Option" --menu "How do you want to select the version?" 10 50 2 \
+  dialog --title "Select Version Option" --menu \
+    "How do you want to select the version for $BASE_SELECTION?" 15 60 9 \
     "latest" "Use the latest tag for $BASE_SELECTION" \
-    "select" "Select from available tags" 2>"$DIALOG_TEMP"
+    "select" "Select from available tags" \
+    2>"$DIALOG_TEMP"
+
   VERSION_MODE=$(<"$DIALOG_TEMP")
 
   if [[ "$VERSION_MODE" == "latest" ]]; then
-    if [[ $IS_UNIVERSAL -eq 1 ]]; then
-      FINAL_TAG="$UNIVERSAL_VARIANT"
-    else
-      FINAL_TAG="$BASE_FAMILY"
-    fi
+    FINAL_TAG=$([[ $IS_UNIVERSAL -eq 1 ]] && echo "$UNIVERSAL_VARIANT" || echo "$BASE_FAMILY")
   else
     echo "Fetching available tags from MCR..."
     if [[ $IS_UNIVERSAL -eq 1 ]]; then
       MCR_TAGS_URL="https://mcr.microsoft.com/v2/devcontainers/universal/tags/list"
-      TAGS=$(curl -s "$MCR_TAGS_URL" | jq -r '.tags[]' | grep -E "(^$UNIVERSAL_VARIANT$|-$UNIVERSAL_VARIANT$)" | sort -V)
+      TAGS=$(curl -s "$MCR_TAGS_URL" | jq -r '.tags[]' | grep "$UNIVERSAL_VARIANT" | sort -V)
     else
       MCR_TAGS_URL="https://mcr.microsoft.com/v2/devcontainers/base/tags/list"
       TAGS=$(curl -s "$MCR_TAGS_URL" | jq -r '.tags[]' | grep "^$BASE_FAMILY" | sort)
     fi
 
     declare -A LTS_MAP
-    if [[ $IS_UNIVERSAL -eq 1 ]]; then
-      LTS_MAP=()
-    elif [[ "$BASE_FAMILY" == "ubuntu" ]]; then
-      LTS_MAP=(
-        ["ubuntu"]="Latest LTS"
-        ["ubuntu-22.04"]="Jammy (22.04)"
-        ["jammy"]="Alias: 22.04"
-        ["ubuntu-20.04"]="Focal (20.04)"
-        ["focal"]="Alias: 20.04"
-      )
-    elif [[ "$BASE_FAMILY" == "debian" ]]; then
-      LTS_MAP=(
-        ["debian"]="Latest Stable"
-        ["debian-bookworm"]="Bookworm (12)"
-        ["bookworm"]="Alias: 12"
-        ["debian-bullseye"]="Bullseye (11)"
-        ["bullseye"]="Alias: 11"
-      )
-    elif [[ "$BASE_FAMILY" == "alpine" ]]; then
-      LTS_MAP=(
-        ["alpine"]="Latest Stable"
-        ["alpine-3.19"]="3.19"
-        ["alpine-3.18"]="3.18"
-      )
+    if [[ $IS_UNIVERSAL -eq 0 ]]; then
+      case "$BASE_FAMILY" in
+        ubuntu)
+          LTS_MAP=(
+            ["ubuntu"]="Latest LTS"
+            ["ubuntu-22.04"]="Jammy (22.04)"
+            ["jammy"]="Alias: 22.04"
+            ["ubuntu-20.04"]="Focal (20.04)"
+            ["focal"]="Alias: 20.04"
+          )
+          ;;
+        debian)
+          LTS_MAP=(
+            ["debian"]="Latest Stable"
+            ["debian-bookworm"]="Bookworm (12)"
+            ["bookworm"]="Alias: 12"
+            ["debian-bullseye"]="Bullseye (11)"
+            ["bullseye"]="Alias: 11"
+          )
+          ;;
+        alpine)
+          LTS_MAP=(
+            ["alpine"]="Latest Stable"
+            ["alpine-3.19"]="3.19"
+            ["alpine-3.18"]="3.18"
+          )
+          ;;
+      esac
     fi
 
     TAG_MENU=()
@@ -136,19 +145,22 @@ select_base_image() {
     fi
 
     dialog --title "Choose Tag for $BASE_SELECTION" --menu \
-      "Select a version tag for your base image:" 20 60 15 "${TAG_MENU[@]}" 2>"$DIALOG_TEMP"
+      "Select a version tag for your base image:" 20 60 15 \
+      "${TAG_MENU[@]}" 2>"$DIALOG_TEMP"
     FINAL_TAG=$(<"$DIALOG_TEMP")
   fi
 
-  if [[ $IS_UNIVERSAL -eq 1 ]]; then
-    FINAL_IMAGE="mcr.microsoft.com/devcontainers/universal:$FINAL_TAG"
-  else
-    FINAL_IMAGE="mcr.microsoft.com/devcontainers/base:$FINAL_TAG"
-  fi
+  FINAL_IMAGE=$(
+    if [[ $IS_UNIVERSAL -eq 1 ]]; then
+      echo "mcr.microsoft.com/devcontainers/universal:$FINAL_TAG"
+    else
+      echo "mcr.microsoft.com/devcontainers/base:$FINAL_TAG"
+    fi
+  )
 }
 
 # --- Feature discovery and configuration ---
-GITHUB_ACCOUNTS=("devcontainers" "blackwd-bwh")
+GITHUB_ACCOUNTS=("blackwd-bwh" "devcontainers")
 BRANCH="main"
 declare -A FEATURE_PATHS
 declare -A FEATURE_ORIGINS
@@ -164,7 +176,7 @@ clone_repo() {
     echo "Cloned $account/features" >&2
     echo "$target_dir/src"
   else
-    echo "❌ Failed to clone $repo" >&2
+    echo "Failed to clone $repo" >&2
     return 1
   fi
 }
@@ -248,7 +260,7 @@ resolve_dependencies() {
 
     # Expand to ghcr reference if not already
     if [[ "$dep" != ghcr.io/* ]]; then
-      dep="ghcr.io/$owner/features/$dep:latest"
+      dep="ghcr.io/$owner/$dep:latest"
     fi
     [[ "$dep" != *:* ]] && dep+=":latest"
 
@@ -276,7 +288,7 @@ resolve_all_dependencies() {
     origin="${FEATURE_ORIGINS[$key]}"
     id="${key#*:}"
     version="${FEATURE_VERSIONS[$key]}"
-    resolve_dependencies "ghcr.io/$origin/features/$id:$version"
+    resolve_dependencies "ghcr.io/$origin/$id:$version"
   done
 
   # Build final list of feature refs
@@ -316,12 +328,14 @@ configure_feature() {
   local options_json
   options_json=$(jq -c '.options // {}' "$path/devcontainer-feature.json")
   declare -A selected_opts
+  declare -A default_opts
 
   if [[ "$options_json" != "{}" ]]; then
     for opt in $(echo "$options_json" | jq -r 'keys[]'); do
       type=$(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].type')
       desc=$(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].description // "No description"')
       default=$(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].default')
+      default_opts["$opt"]="$default"
 
       if [[ "$type" == "string" && $(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].proposals | length') -gt 0 ]]; then
         mapfile -t options < <(echo "$options_json" | jq -r --arg opt "$opt" '.[$opt].proposals[]')
@@ -351,12 +365,19 @@ configure_feature() {
 
   local opts="{}"
   for k in "${!selected_opts[@]}"; do
-    if [[ ${selected_opts[$k]} =~ ^(true|false)$ ]]; then
-      opts=$(echo "$opts" | jq --arg k "$k" --argjson v "${selected_opts[$k]}" '. + {($k): $v}')
-    else
-      opts=$(echo "$opts" | jq --arg k "$k" --arg v "${selected_opts[$k]}" '. + {($k): $v}')
+    selected_val="${selected_opts[$k]}"
+    default_val="${default_opts[$k]:-}"
+
+    # Only include if value differs from default
+    if [[ "$selected_val" != "$default_val" ]]; then
+      if [[ "$selected_val" =~ ^(true|false)$ ]]; then
+        opts=$(echo "$opts" | jq --arg k "$k" --argjson v "$selected_val" '. + {($k): $v}')
+      else
+        opts=$(echo "$opts" | jq --arg k "$k" --arg v "$selected_val" '. + {($k): $v}')
+      fi
     fi
   done
+
   FEATURE_OPTS["$key"]="$opts"
   FEATURE_VERSIONS["$key"]="$version"
 }
@@ -421,40 +442,54 @@ get_project_destination() {
 # Generate the final .devcontainer/devcontainer.json using the selected
 # base image and features. The file is written to DEST_DIR and an
 # initial Git repository is created if one does not already exist.
+# Fixed write_devcontainer function
 write_devcontainer() {
-  mkdir -p "$DEST_DIR/.devcontainer"
+  local workspace_folder="$1"
+  local project_name="$2"
+  local base_image="$3"
+
+  mkdir -p "$workspace_folder/.devcontainer"
+
   local features_obj="{}"
 
   for ref in "${ALL_FEATURE_REFS[@]}"; do
-    owner="$(echo "$ref" | cut -d/ -f2)"
-    feature="$(echo "$ref" | cut -d/ -f4 | cut -d: -f1)"
-    key="$owner:$feature"
-    if [[ -n "${FEATURE_OPTS[$key]+_}" ]]; then
+    local owner feature_with_version feature key opts
+
+    owner=$(echo "$ref" | cut -d/ -f2)
+    feature_with_version=$(basename "$ref")
+    feature=$(echo "$feature_with_version" | cut -d: -f1)
+    key="${owner}:${feature}"
+
+    opts="{}"
+    if [[ -v FEATURE_OPTS["$key"] ]]; then
       opts="${FEATURE_OPTS[$key]}"
-    else
-      opts="{}"
     fi
+
     features_obj=$(echo "$features_obj" | jq --arg ref "$ref" --argjson opt "$opts" '. + {($ref): $opt}')
   done
 
-  jq -n \
-    --arg image "$FINAL_IMAGE" \
+  local jq_program='
+{
+  name: $name,
+  image: $image
+}
+| if ($features | length) > 0 then . + {features: $features} else . end
+'
+
+  local devcontainer_json
+  devcontainer_json=$(jq -n \
+    --arg name "$project_name" \
+    --arg image "$base_image" \
     --argjson features "$features_obj" \
-    'if ($features | length) == 0 then {image: $image} else {image: $image, features: $features} end' \
-    > "$DEST_DIR/.devcontainer/devcontainer.json"
+    "$jq_program"
+  )
 
-  echo "✅ .devcontainer/devcontainer.json created at $DEST_DIR/.devcontainer/devcontainer.json"
-
-  if command -v git >/dev/null && [[ ! -d "$DEST_DIR/.git" ]]; then
-    (
-      cd "$DEST_DIR"
-      git init -b main
-      git add .
-      git commit -m "Initial commit"
-    )
-  fi
+  echo "$devcontainer_json" > "$workspace_folder/.devcontainer/devcontainer.json"
 }
 
+# --- Main Execution ---
+# Run the helper functions in order to compose the dev container
+# definition and scaffold the project.
 # --- Main Execution ---
 # Run the helper functions in order to compose the dev container
 # definition and scaffold the project.
@@ -467,4 +502,4 @@ for feat in "${SELECTED_FEATURES[@]}"; do
 done
 resolve_all_dependencies
 get_project_destination
-write_devcontainer
+write_devcontainer "$DEST_DIR" "$PROJECT_NAME" "$FINAL_IMAGE"
