@@ -158,7 +158,7 @@ select_base_image() {
       "${TAG_MENU[@]}" 2>"$DIALOG_TEMP"
     code=$?
     if [[ $code -ne 0 ]]; then
-      [[ $code -eq 1 ]] && return 1 || return 2
+      [[ $code -eq 1 || $code -eq 255 ]] && return 1 || return 2
     fi
     FINAL_TAG=$(<"$DIALOG_TEMP")
   fi
@@ -235,7 +235,7 @@ select_features() {
     read -ra SELECTED_FEATURES <<< "$(tr -d '"' < "$WORKDIR/selected")"
   else
     local code=$?
-    [[ $code -eq 1 ]] && return 1 || return 2
+    [[ $code -eq 1 || $code -eq 255 ]] && return 1 || return 2
   fi
 }
 
@@ -410,48 +410,51 @@ get_project_destination() {
     if ! dialog --cancel-label "Back" --title "Select Project Location" --inputbox \
       "Enter the parent directory where the new project folder should go:" 10 60 "$DEFAULT_PARENT" 2>"$DIALOG_TEMP"; then
       code=$?
-      [[ $code -eq 1 ]] && return 1 || return 2
+      [[ $code -eq 1 || $code -eq 255 ]] && return 1 || return 2
     fi
     PARENT_DIR=$(<"$DIALOG_TEMP")
-    [[ -z "$PARENT_DIR" ]] && echo "No parent directory provided." && exit 1
+    [[ -z "$PARENT_DIR" ]] && dialog --msgbox "No parent directory provided." 6 60 && continue
     PARENT_DIR="${PARENT_DIR%/}" # remove trailing slash
 
     # Ask for project name
-    if ! dialog --cancel-label "Back" --title "Project Name" --inputbox "Enter your new project name:" 8 50 "${PROJECT_NAME:-}" 2>"$DIALOG_TEMP"; then
+    if ! dialog --cancel-label "Back" --title "Project Name" --inputbox \
+      "Enter your new project name:" 8 50 "${PROJECT_NAME:-}" 2>"$DIALOG_TEMP"; then
       code=$?
-      [[ $code -eq 1 ]] && return 1 || return 2
+      [[ $code -eq 1 || $code -eq 255 ]] && return 1 || return 2
     fi
     PROJECT_NAME=$(<"$DIALOG_TEMP")
-    [[ -z "$PROJECT_NAME" ]] && echo "No project name provided." && exit 1
+    [[ -z "$PROJECT_NAME" ]] && dialog --msgbox "No project name provided." 6 60 && continue
 
     DEST_DIR="$PARENT_DIR/$PROJECT_NAME"
 
     # Confirm
-    if ! dialog --yes-label "Proceed" --no-label "Back" --title "Confirm" --yesno "Project directory will be:\n$DEST_DIR\n\nProceed?" 10 60; then
+    if ! dialog --yes-label "Proceed" --no-label "Back" --title "Confirm" --yesno \
+      "Project directory will be:\n$DEST_DIR\n\nProceed?" 10 60; then
       code=$?
-      if [[ $code -eq 1 ]]; then
-        return 1
-      else
-        return 2
-      fi
+      [[ $code -eq 1 || $code -eq 255 ]] && continue || return 2
     fi
 
+    # Directory exists check
     if [[ -e "$DEST_DIR" ]]; then
-      dialog --cancel-label "Back" --title "Directory Exists" --menu "The directory $DEST_DIR already exists. What would you like to do?" 12 60 2 \
+      dialog --cancel-label "Back" --title "Directory Exists" --menu \
+        "The directory $DEST_DIR already exists. What would you like to do?" 12 60 2 \
         change "Choose a different location" \
         overwrite "Delete and use this directory" 2>"$DIALOG_TEMP"
+      code=$?
+      [[ $code -eq 1 || $code -eq 255 ]] && continue || true
       CHOICE=$(<"$DIALOG_TEMP")
+
       if [[ "$CHOICE" == "overwrite" ]]; then
-        if dialog --yes-label "Delete" --no-label "Back" --yesno "Delete existing directory and continue?" 8 60; then
+        if dialog --yes-label "Delete" --no-label "Back" --yesno \
+          "Delete existing directory and continue?" 8 60; then
           rm -rf "$DEST_DIR"
           mkdir -p "$DEST_DIR/.devcontainer"
           break
         else
           code=$?
-          [[ $code -eq 1 ]] && continue || return 2
+          [[ $code -eq 1 || $code -eq 255 ]] && continue || return 2
         fi
       else
-        # choose a different location
         continue
       fi
     else
@@ -460,6 +463,7 @@ get_project_destination() {
     fi
   done
 }
+
 
 # Generate the final .devcontainer/devcontainer.json using the selected
 # base image and features. The file is written to DEST_DIR and an
@@ -510,8 +514,7 @@ while true; do
       select_base_image
       rc=$?
       if [[ $rc -eq 1 ]]; then
-        ((STEP--))
-        [[ $STEP -le 0 ]] && exit 0
+        STEP=1  # Stay here on back
         continue
       elif [[ $rc -eq 2 ]]; then
         exit 1
@@ -522,7 +525,7 @@ while true; do
       select_features
       rc=$?
       if [[ $rc -eq 1 ]]; then
-        ((STEP--))
+        STEP=1  # Go back to base image selection
         continue
       elif [[ $rc -eq 2 ]]; then
         exit 1
@@ -537,7 +540,7 @@ while true; do
       get_project_destination
       rc=$?
       if [[ $rc -eq 1 ]]; then
-        ((STEP--))
+        STEP=2  # Go back to feature selection
         continue
       elif [[ $rc -eq 2 ]]; then
         exit 1
