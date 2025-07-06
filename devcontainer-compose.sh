@@ -11,7 +11,9 @@ set -euo pipefail
 # resulting configuration is written to disk and committed to Git.
 # ===============================================================
 
+#Create temporary file
 DIALOG_TEMP=$(mktemp)
+#Create temporary directory
 WORKDIR=$(mktemp -d)
 
 # Remove temporary files and directories that hold dialog results and
@@ -28,12 +30,14 @@ trap cleanup EXIT INT TERM
 # Ensure required utilities are installed. If any are missing the user is
 # offered an option to install them via the system package manager.
 check_dependencies() {
+  # declare local array: missing
   local missing=()
   command -v dialog >/dev/null || missing+=("dialog")
   command -v jq >/dev/null || missing+=("jq")
   command -v git >/dev/null || missing+=("git")
   command -v curl >/dev/null || missing+=("curl")
-
+  
+  # if the missing array is not empty..
   if [[ ${#missing[@]} -gt 0 ]]; then
     if dialog --yesno "Missing required dependencies:\n${missing[*]}\n\nAttempt to install them now?" 10 60; then
       if command -v apt-get >/dev/null; then
@@ -62,11 +66,13 @@ select_base_image() {
     "ubuntu" "Ubuntu-based devcontainer" \
     "debian" "Debian-based devcontainer" \
     "alpine" "Alpine-based devcontainer" \
-    "noble" "Universal (noble)" \
-    "linux" "Universal (linux)" \
-    "focal" "Universal (focal)" 2>"$DIALOG_TEMP"
+    "noble" "Universal (Ubuntu 24.04 LTS)" \
+    "focal" "Universal (Ubuntu 20.04 LTS)" \
+    "linux" "Universal (Minimal)" \
+    2>"$DIALOG_TEMP"
 
   BASE_SELECTION=$(<"$DIALOG_TEMP")
+
   if [[ "$BASE_SELECTION" =~ ^(noble|linux|focal)$ ]]; then
     IS_UNIVERSAL=1
     UNIVERSAL_VARIANT="$BASE_SELECTION"
@@ -76,52 +82,55 @@ select_base_image() {
     BASE_FAMILY="$BASE_SELECTION"
   fi
 
-  dialog --title "Select Version Option" --menu "How do you want to select the version?" 10 50 2 \
+  dialog --title "Select Version Option" --menu \
+    "How do you want to select the version for $BASE_SELECTION?" 15 60 9 \
     "latest" "Use the latest tag for $BASE_SELECTION" \
-    "select" "Select from available tags" 2>"$DIALOG_TEMP"
+    "select" "Select from available tags" \
+    2>"$DIALOG_TEMP"
+
   VERSION_MODE=$(<"$DIALOG_TEMP")
 
   if [[ "$VERSION_MODE" == "latest" ]]; then
-    if [[ $IS_UNIVERSAL -eq 1 ]]; then
-      FINAL_TAG="$UNIVERSAL_VARIANT"
-    else
-      FINAL_TAG="$BASE_FAMILY"
-    fi
+    FINAL_TAG=$([[ $IS_UNIVERSAL -eq 1 ]] && echo "$UNIVERSAL_VARIANT" || echo "$BASE_FAMILY")
   else
     echo "Fetching available tags from MCR..."
     if [[ $IS_UNIVERSAL -eq 1 ]]; then
       MCR_TAGS_URL="https://mcr.microsoft.com/v2/devcontainers/universal/tags/list"
-      TAGS=$(curl -s "$MCR_TAGS_URL" | jq -r '.tags[]' | grep -E "(^$UNIVERSAL_VARIANT$|-$UNIVERSAL_VARIANT$)" | sort -V)
+      TAGS=$(curl -s "$MCR_TAGS_URL" | jq -r '.tags[]' | grep "$UNIVERSAL_VARIANT" | sort -V)
     else
       MCR_TAGS_URL="https://mcr.microsoft.com/v2/devcontainers/base/tags/list"
       TAGS=$(curl -s "$MCR_TAGS_URL" | jq -r '.tags[]' | grep "^$BASE_FAMILY" | sort)
     fi
 
     declare -A LTS_MAP
-    if [[ $IS_UNIVERSAL -eq 1 ]]; then
-      LTS_MAP=()
-    elif [[ "$BASE_FAMILY" == "ubuntu" ]]; then
-      LTS_MAP=(
-        ["ubuntu"]="Latest LTS"
-        ["ubuntu-22.04"]="Jammy (22.04)"
-        ["jammy"]="Alias: 22.04"
-        ["ubuntu-20.04"]="Focal (20.04)"
-        ["focal"]="Alias: 20.04"
-      )
-    elif [[ "$BASE_FAMILY" == "debian" ]]; then
-      LTS_MAP=(
-        ["debian"]="Latest Stable"
-        ["debian-bookworm"]="Bookworm (12)"
-        ["bookworm"]="Alias: 12"
-        ["debian-bullseye"]="Bullseye (11)"
-        ["bullseye"]="Alias: 11"
-      )
-    elif [[ "$BASE_FAMILY" == "alpine" ]]; then
-      LTS_MAP=(
-        ["alpine"]="Latest Stable"
-        ["alpine-3.19"]="3.19"
-        ["alpine-3.18"]="3.18"
-      )
+    if [[ $IS_UNIVERSAL -eq 0 ]]; then
+      case "$BASE_FAMILY" in
+        ubuntu)
+          LTS_MAP=(
+            ["ubuntu"]="Latest LTS"
+            ["ubuntu-22.04"]="Jammy (22.04)"
+            ["jammy"]="Alias: 22.04"
+            ["ubuntu-20.04"]="Focal (20.04)"
+            ["focal"]="Alias: 20.04"
+          )
+          ;;
+        debian)
+          LTS_MAP=(
+            ["debian"]="Latest Stable"
+            ["debian-bookworm"]="Bookworm (12)"
+            ["bookworm"]="Alias: 12"
+            ["debian-bullseye"]="Bullseye (11)"
+            ["bullseye"]="Alias: 11"
+          )
+          ;;
+        alpine)
+          LTS_MAP=(
+            ["alpine"]="Latest Stable"
+            ["alpine-3.19"]="3.19"
+            ["alpine-3.18"]="3.18"
+          )
+          ;;
+      esac
     fi
 
     TAG_MENU=()
@@ -136,15 +145,18 @@ select_base_image() {
     fi
 
     dialog --title "Choose Tag for $BASE_SELECTION" --menu \
-      "Select a version tag for your base image:" 20 60 15 "${TAG_MENU[@]}" 2>"$DIALOG_TEMP"
+      "Select a version tag for your base image:" 20 60 15 \
+      "${TAG_MENU[@]}" 2>"$DIALOG_TEMP"
     FINAL_TAG=$(<"$DIALOG_TEMP")
   fi
 
-  if [[ $IS_UNIVERSAL -eq 1 ]]; then
-    FINAL_IMAGE="mcr.microsoft.com/devcontainers/universal:$FINAL_TAG"
-  else
-    FINAL_IMAGE="mcr.microsoft.com/devcontainers/base:$FINAL_TAG"
-  fi
+  FINAL_IMAGE=$(
+    if [[ $IS_UNIVERSAL -eq 1 ]]; then
+      echo "mcr.microsoft.com/devcontainers/universal:$FINAL_TAG"
+    else
+      echo "mcr.microsoft.com/devcontainers/base:$FINAL_TAG"
+    fi
+  )
 }
 
 # --- Feature discovery and configuration ---
@@ -164,7 +176,7 @@ clone_repo() {
     echo "Cloned $account/features" >&2
     echo "$target_dir/src"
   else
-    echo "❌ Failed to clone $repo" >&2
+    echo "Failed to clone $repo" >&2
     return 1
   fi
 }
@@ -443,7 +455,7 @@ write_devcontainer() {
     'if ($features | length) == 0 then {image: $image} else {image: $image, features: $features} end' \
     > "$DEST_DIR/.devcontainer/devcontainer.json"
 
-  echo "✅ .devcontainer/devcontainer.json created at $DEST_DIR/.devcontainer/devcontainer.json"
+  echo ".devcontainer/devcontainer.json created at $DEST_DIR/.devcontainer/devcontainer.json"
 
   if command -v git >/dev/null && [[ ! -d "$DEST_DIR/.git" ]]; then
     (
