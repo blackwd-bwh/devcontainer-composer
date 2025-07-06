@@ -2,11 +2,21 @@
 set -euo pipefail
 
 # ===============================================================
-# Compose a devcontainer.json using a base image and GitHub features
+# devcontainer-compose.sh
+#
+# Interactive wizard that scaffolds a project folder containing a
+# `.devcontainer/devcontainer.json` file. The user picks a base image
+# from the official devcontainers set and can optionally add GitHub
+# features.  Feature dependencies are resolved automatically and the
+# resulting configuration is written to disk and committed to Git.
 # ===============================================================
 
 DIALOG_TEMP=$(mktemp)
 WORKDIR=$(mktemp -d)
+
+# Remove temporary files and directories that hold dialog results and
+# cloned feature repositories. This function is triggered on normal
+# exit as well as on interrupts.
 cleanup() {
   rm -f "$DIALOG_TEMP"
   rm -rf "$WORKDIR"
@@ -15,6 +25,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # ---Script Dependency Check ---
+# Ensure required utilities are installed. If any are missing the user is
+# offered an option to install them via the system package manager.
 check_dependencies() {
   local missing=()
   command -v dialog >/dev/null || missing+=("dialog")
@@ -42,6 +54,9 @@ check_dependencies() {
 }
 
 # --- Base image selection (from select-base-image.sh) ---
+# Present a list of base container families (Ubuntu, Debian, etc.)
+# and allow the user to pick either the latest tag or a specific
+# version from the Microsoft Container Registry.
 select_base_image() {
   dialog --title "Select Base Image" --menu "Choose a base image:" 15 60 9 \
     "ubuntu" "Ubuntu-based devcontainer" \
@@ -154,6 +169,9 @@ clone_repo() {
   fi
 }
 
+# Clone each feature repository listed in GITHUB_ACCOUNTS and build a
+# menu of available features for the user to choose from.  The function
+# records the path and origin account for every discovered feature.
 gather_all_features() {
   ALL_MENU_ITEMS=()
   for account in "${GITHUB_ACCOUNTS[@]}"; do
@@ -171,6 +189,9 @@ gather_all_features() {
   done
 }
 
+# Display a checklist dialog built from ALL_MENU_ITEMS and capture the
+# user's feature selections.  The chosen feature keys are stored in the
+# SELECTED_FEATURES array.
 select_features() {
   if dialog --checklist "Select features to include:\n(Use SPACE to select)" 30 150 12 \
     "${ALL_MENU_ITEMS[@]}" 2>"$WORKDIR/selected"; then
@@ -184,7 +205,9 @@ select_features() {
 ## Dependency Resolution Helpers
 ## ---------------------------------------------------------------------------
 
-# Fetch devcontainer-feature.json from GitHub for a ghcr.io feature reference
+# Fetch devcontainer-feature.json from GitHub for a ghcr.io feature reference.
+# Used when a feature was not cloned locally so we can still resolve its
+# dependencies.
 fetch_remote_feature_json() {
   local ref="$1"                           # ghcr.io/<owner>/features/<id>:<tag>
   local owner feature
@@ -193,7 +216,9 @@ fetch_remote_feature_json() {
   curl -fsSL "https://raw.githubusercontent.com/$owner/features/main/src/$feature/devcontainer-feature.json" 2>/dev/null || true
 }
 
-# Recursively resolve dependsOn entries for a feature reference
+# Recursively resolve `dependsOn` entries for a feature reference. The
+# function adds every discovered dependency to the RESOLVED map so that
+# it is only processed once.
 resolve_dependencies() {
   local ref="$1"                   # fully qualified ghcr feature reference
 
@@ -231,6 +256,10 @@ resolve_dependencies() {
   done
 }
 
+# Resolve the dependency graph for all user selected features. The
+# final set of fully qualified feature references is stored in
+# ALL_FEATURE_REFS and any automatically added dependencies are
+# presented back to the user.
 resolve_all_dependencies() {
   declare -gA RESOLVED=()
   declare -gA USER_MAP=()
@@ -276,6 +305,9 @@ resolve_all_dependencies() {
   fi
 }
 
+# Prompt the user for configuration options defined by a feature's
+# devcontainer-feature.json. Selected options and versions are stored
+# so they can be merged into the final devcontainer.json.
 configure_feature() {
   local key="$1"
   local path="${FEATURE_PATHS[$key]}"
@@ -329,6 +361,9 @@ configure_feature() {
   FEATURE_VERSIONS["$key"]="$version"
 }
 
+# Prompt the user for a destination directory and project name. The
+# function will create the directory (removing an existing one if the
+# user approves) and store the path in DEST_DIR.
 get_project_destination() {
   DEFAULT_PARENT="$HOME/code"
 
@@ -383,6 +418,9 @@ get_project_destination() {
   done
 }
 
+# Generate the final .devcontainer/devcontainer.json using the selected
+# base image and features. The file is written to DEST_DIR and an
+# initial Git repository is created if one does not already exist.
 write_devcontainer() {
   mkdir -p "$DEST_DIR/.devcontainer"
   local features_obj="{}"
@@ -418,6 +456,8 @@ write_devcontainer() {
 }
 
 # --- Main Execution ---
+# Run the helper functions in order to compose the dev container
+# definition and scaffold the project.
 check_dependencies
 select_base_image
 gather_all_features
