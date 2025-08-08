@@ -62,7 +62,9 @@ check_dependencies() {
 # and allow the user to pick either the latest tag or a specific
 # version from the Microsoft Container Registry.
 select_base_image() {
-  dialog --title "Select Base Image" --menu "Choose a base image:" 15 60 9 \
+  local default=${BASE_SELECTION:-ubuntu}
+  dialog --cancel-label "Back" --default-item "$default" \
+    --title "Select Base Image" --menu "Choose a base image:" 15 60 9 \
     "ubuntu" "Ubuntu-based devcontainer" \
     "debian" "Debian-based devcontainer" \
     "alpine" "Alpine-based devcontainer" \
@@ -70,7 +72,10 @@ select_base_image() {
     "focal" "Universal (Ubuntu 20.04 LTS)" \
     "linux" "Universal (Minimal)" \
     2>"$DIALOG_TEMP"
-
+  local code=$?
+  if [[ $code -ne 0 ]]; then
+    [[ $code -eq 1 ]] && return 1 || return 2
+  fi
   BASE_SELECTION=$(<"$DIALOG_TEMP")
 
   if [[ "$BASE_SELECTION" =~ ^(noble|linux|focal)$ ]]; then
@@ -82,12 +87,15 @@ select_base_image() {
     BASE_FAMILY="$BASE_SELECTION"
   fi
 
-  dialog --title "Select Version Option" --menu \
+  dialog --cancel-label "Back" --default-item "${VERSION_MODE:-latest}" --title "Select Version Option" --menu \
     "How do you want to select the version for $BASE_SELECTION?" 15 60 9 \
     "latest" "Use the latest tag for $BASE_SELECTION" \
     "select" "Select from available tags" \
     2>"$DIALOG_TEMP"
-
+  code=$?
+  if [[ $code -ne 0 ]]; then
+    [[ $code -eq 1 ]] && return 1 || return 2
+  fi
   VERSION_MODE=$(<"$DIALOG_TEMP")
 
   if [[ "$VERSION_MODE" == "latest" ]]; then
@@ -144,9 +152,14 @@ select_base_image() {
       exit 1
     fi
 
-    dialog --title "Choose Tag for $BASE_SELECTION" --menu \
+    dialog --cancel-label "Back" --default-item "${FINAL_TAG:-${TAG_MENU[0]}}" \
+      --title "Choose Tag for $BASE_SELECTION" --menu \
       "Select a version tag for your base image:" 20 60 15 \
       "${TAG_MENU[@]}" 2>"$DIALOG_TEMP"
+    code=$?
+    if [[ $code -ne 0 ]]; then
+      [[ $code -eq 1 || $code -eq 255 ]] && return 1 || return 2
+    fi
     FINAL_TAG=$(<"$DIALOG_TEMP")
   fi
 
@@ -166,6 +179,7 @@ declare -A FEATURE_PATHS
 declare -A FEATURE_ORIGINS
 declare -A FEATURE_OPTS
 declare -A FEATURE_VERSIONS
+declare -a SELECTED_FEATURES=()
 
 clone_repo() {
   local account="$1"
@@ -205,11 +219,23 @@ gather_all_features() {
 # user's feature selections.  The chosen feature keys are stored in the
 # SELECTED_FEATURES array.
 select_features() {
-  if dialog --checklist "Select features to include:\n(Use SPACE to select)" 30 150 12 \
-    "${ALL_MENU_ITEMS[@]}" 2>"$WORKDIR/selected"; then
+  local items=()
+  for ((i=0; i<${#ALL_MENU_ITEMS[@]}; i+=3)); do
+    key="${ALL_MENU_ITEMS[i]}"
+    desc="${ALL_MENU_ITEMS[i+1]}"
+    if [[ " ${SELECTED_FEATURES[*]} " == *" $key "* ]]; then
+      items+=("$key" "$desc" "on")
+    else
+      items+=("$key" "$desc" "off")
+    fi
+  done
+
+  if dialog --cancel-label "Back" --checklist "Select features to include:\n(Use SPACE to select)" 30 150 12 \
+    "${items[@]}" 2>"$WORKDIR/selected"; then
     read -ra SELECTED_FEATURES <<< "$(tr -d '"' < "$WORKDIR/selected")"
   else
-    SELECTED_FEATURES=()
+    local code=$?
+    [[ $code -eq 1 || $code -eq 255 ]] && return 1 || return 2
   fi
 }
 
@@ -377,50 +403,58 @@ configure_feature() {
 # function will create the directory (removing an existing one if the
 # user approves) and store the path in DEST_DIR.
 get_project_destination() {
-  DEFAULT_PARENT="$HOME/code"
+  DEFAULT_PARENT="${PARENT_DIR:-$HOME/code}"
 
   while true; do
     # Ask for parent directory
-    if ! dialog --title "Select Project Location" --inputbox \
+    if ! dialog --cancel-label "Back" --title "Select Project Location" --inputbox \
       "Enter the parent directory where the new project folder should go:" 10 60 "$DEFAULT_PARENT" 2>"$DIALOG_TEMP"; then
-      echo "Cancelled."
-      exit 1
+      code=$?
+      [[ $code -eq 1 || $code -eq 255 ]] && return 1 || return 2
     fi
     PARENT_DIR=$(<"$DIALOG_TEMP")
-    [[ -z "$PARENT_DIR" ]] && echo "No parent directory provided." && exit 1
+    [[ -z "$PARENT_DIR" ]] && dialog --msgbox "No parent directory provided." 6 60 && continue
     PARENT_DIR="${PARENT_DIR%/}" # remove trailing slash
 
     # Ask for project name
-    if ! dialog --title "Project Name" --inputbox "Enter your new project name:" 8 50 2>"$DIALOG_TEMP"; then
-      echo "Cancelled."
-      exit 1
+    if ! dialog --cancel-label "Back" --title "Project Name" --inputbox \
+      "Enter your new project name:" 8 50 "${PROJECT_NAME:-}" 2>"$DIALOG_TEMP"; then
+      code=$?
+      [[ $code -eq 1 || $code -eq 255 ]] && return 1 || return 2
     fi
     PROJECT_NAME=$(<"$DIALOG_TEMP")
-    [[ -z "$PROJECT_NAME" ]] && echo "No project name provided." && exit 1
+    [[ -z "$PROJECT_NAME" ]] && dialog --msgbox "No project name provided." 6 60 && continue
 
     DEST_DIR="$PARENT_DIR/$PROJECT_NAME"
 
     # Confirm
-    if ! dialog --title "Confirm" --yesno "Project directory will be:\n$DEST_DIR\n\nProceed?" 10 60; then
-      echo "Cancelled."
-      exit 1
+    if ! dialog --yes-label "Proceed" --no-label "Back" --title "Confirm" --yesno \
+      "Project directory will be:\n$DEST_DIR\n\nProceed?" 10 60; then
+      code=$?
+      [[ $code -eq 1 || $code -eq 255 ]] && continue || return 2
     fi
 
+    # Directory exists check
     if [[ -e "$DEST_DIR" ]]; then
-      dialog --title "Directory Exists" --menu "The directory $DEST_DIR already exists. What would you like to do?" 12 60 2 \
+      dialog --cancel-label "Back" --title "Directory Exists" --menu \
+        "The directory $DEST_DIR already exists. What would you like to do?" 12 60 2 \
         change "Choose a different location" \
         overwrite "Delete and use this directory" 2>"$DIALOG_TEMP"
+      code=$?
+      [[ $code -eq 1 || $code -eq 255 ]] && continue || true
       CHOICE=$(<"$DIALOG_TEMP")
+
       if [[ "$CHOICE" == "overwrite" ]]; then
-        if dialog --yesno "Delete existing directory and continue?" 8 60; then
+        if dialog --yes-label "Delete" --no-label "Back" --yesno \
+          "Delete existing directory and continue?" 8 60; then
           rm -rf "$DEST_DIR"
           mkdir -p "$DEST_DIR/.devcontainer"
           break
         else
-          continue
+          code=$?
+          [[ $code -eq 1 || $code -eq 255 ]] && continue || return 2
         fi
       else
-        # choose a different location
         continue
       fi
     else
@@ -429,6 +463,7 @@ get_project_destination() {
     fi
   done
 }
+
 
 # Generate the final .devcontainer/devcontainer.json using the selected
 # base image and features. The file is written to DEST_DIR and an
@@ -471,12 +506,50 @@ write_devcontainer() {
 # Run the helper functions in order to compose the dev container
 # definition and scaffold the project.
 check_dependencies
-select_base_image
 gather_all_features
-select_features
-for feat in "${SELECTED_FEATURES[@]}"; do
-  configure_feature "$feat"
+STEP=1
+while true; do
+  case $STEP in
+    1)
+      select_base_image
+      rc=$?
+      if [[ $rc -eq 1 ]]; then
+        STEP=1  # Stay here on back
+        continue
+      elif [[ $rc -eq 2 ]]; then
+        exit 1
+      fi
+      ((STEP++))
+      ;;
+    2)
+      select_features
+      rc=$?
+      if [[ $rc -eq 1 ]]; then
+        STEP=1  # Go back to base image selection
+        continue
+      elif [[ $rc -eq 2 ]]; then
+        exit 1
+      fi
+      for feat in "${SELECTED_FEATURES[@]}"; do
+        [[ -n "${FEATURE_OPTS[$feat]+_}" ]] || configure_feature "$feat"
+      done
+      resolve_all_dependencies
+      ((STEP++))
+      ;;
+    3)
+      get_project_destination
+      rc=$?
+      if [[ $rc -eq 1 ]]; then
+        STEP=2  # Go back to feature selection
+        continue
+      elif [[ $rc -eq 2 ]]; then
+        exit 1
+      fi
+      ((STEP++))
+      ;;
+    4)
+      write_devcontainer
+      break
+      ;;
+  esac
 done
-resolve_all_dependencies
-get_project_destination
-write_devcontainer
